@@ -41,6 +41,16 @@
     text-transform: uppercase;
     user-select: none;
   }
+
+  #setup-warning {
+    display: none;
+    color: #ffd166;
+    background: #2a2440;
+    border: 3px solid #8a6a1a;
+    padding: 8px 16px;
+    font-size: 12px;
+    max-width: 900px;
+  }
 </style>
 </head>
 <body>
@@ -49,8 +59,42 @@
   <canvas id="game" width="240" height="132"></canvas>
 </div>
 <div id="hud">A/D move · Space jump · E mine · Q place · 1/2 pick slot</div>
+<div id="setup-warning">
+  ⚠ Running in SOLO mode — Firebase config missing. Open this file and paste
+  your Firebase config where it says PASTE YOUR FIREBASE CONFIG HERE.
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
 <script>
+// ============================================================
+//  PASTE YOUR FIREBASE CONFIG HERE
+//  (from Firebase console → Project settings → Your apps → Config)
+//  It looks like:
+//  const firebaseConfig = {
+//    apiKey: "AIza....",
+//    authDomain: "yourproject.firebaseapp.com",
+//    databaseURL: "https://yourproject-default-rtdb.firebaseio.com",
+//    projectId: "yourproject",
+//    ...
+//  };
+// ============================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyDuvSleMRGn3V7x7fk-cjpVh_tLfubpMiw",
+  authDomain: "baseplate-pixel-game.firebaseapp.com",
+  databaseURL: "https://baseplate-pixel-game-default-rtdb.firebaseio.com",
+  projectId: "baseplate-pixel-game",
+  storageBucket: "baseplate-pixel-game.firebasestorage.app",
+  messagingSenderId: "768866583298",
+  appId: "1:768866583298:web:e0a630385141b9b3d8f81b",
+  measurementId: "G-V9N19V69Q2"
+};
+
+// ============================================================
+//  GAME
+// ============================================================
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
@@ -64,18 +108,13 @@ const COLS = W / TILE;    // 20
 const ROWS = H / TILE;    // 11
 
 // 0 = air, 1 = grass block, 2 = dirt block
-let grid = [];
-function freshWorld() {
-  const g = [];
-  for (let r = 0; r < ROWS; r++) g.push(new Array(COLS).fill(0));
-  for (let c = 0; c < COLS; c++) {
-    g[ROWS - 3][c] = 1;
-    g[ROWS - 2][c] = 2;
-    g[ROWS - 1][c] = 2;
-  }
-  return g;
+const grid = [];
+for (let r = 0; r < ROWS; r++) grid.push(new Array(COLS).fill(0));
+for (let c = 0; c < COLS; c++) {
+  grid[ROWS - 3][c] = 1;
+  grid[ROWS - 2][c] = 2;
+  grid[ROWS - 1][c] = 2;
 }
-grid = freshWorld();
 
 function tileAt(c, r) {
   if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return 0;
@@ -102,17 +141,12 @@ const PAL = {
   online: '#7dff9a', offline: '#ffd166'
 };
 
-// Player color pairs (body, dark) — yours is picked from your id
 const SKINS = [
-  ['#f05a3c', '#b23a24'], // orange
-  ['#4a90e8', '#2c5ba8'], // blue
-  ['#a05ae8', '#6e35a8'], // purple
-  ['#e8c84a', '#a8892c'], // yellow
-  ['#4ae8b4', '#2ca87e'], // teal
-  ['#e84a90', '#a82c5f']  // pink
+  ['#f05a3c', '#b23a24'], ['#4a90e8', '#2c5ba8'], ['#a05ae8', '#6e35a8'],
+  ['#e8c84a', '#a8892c'], ['#4ae8b4', '#2ca87e'], ['#e84a90', '#a82c5f']
 ];
 
-// ---- Hotbar / inventory ----
+// ---- Hotbar ----
 const SLOTS = [
   { type: 1, name: 'grass', count: 0 },
   { type: 2, name: 'dirt',  count: 0 }
@@ -141,107 +175,81 @@ const player = {
   placeHeld: false
 };
 
-// ---- Remote players ----
-// id -> { x, y, tx, ty, facing, moving, lastSeen, skin }
+// ---- Remote players: id -> {x,y,tx,ty,facing,moving,skin,walkFrame,walkTimer} ----
 const remotes = new Map();
 
-// ==========================================================
-// NETWORKING via shared artifact storage
-// Everyone who opens the PUBLISHED link shares these keys:
-//   mp:player:<id>  -> {x, y, facing, moving, t}
-//   mp:world        -> {grid, t}
-// Positions/world edits are visible to all visitors — that's
-// what makes it multiplayer.
-// ==========================================================
-const net = {
-  enabled: typeof window.storage !== 'undefined',
-  lastError: false,
-  worldStamp: 0,       // timestamp of the world version we last applied
-  worldDirty: false    // we changed a block and need to upload
-};
+// ============================================================
+//  NETWORKING (Firebase Realtime Database)
+//  DB layout:
+//    players/<id> = { x, y, f, m }     (auto-removed on disconnect)
+//    world/<r>_<c> = tileType          (0 = broken/air)
+// ============================================================
+const net = { enabled: false, db: null };
 
-async function netWriteSelf() {
-  if (!net.enabled) return;
+if (firebaseConfig) {
   try {
-    await window.storage.set('mp:player:' + myId, JSON.stringify({
-      x: Math.round(player.x),
-      y: Math.round(player.y),
-      facing: player.facing,
-      moving: player.vx !== 0,
-      t: Date.now()
-    }), true);
-    net.lastError = false;
-  } catch (e) { net.lastError = true; }
+    firebase.initializeApp(firebaseConfig);
+    net.db = firebase.database();
+    net.enabled = true;
+
+    const myRef = net.db.ref('players/' + myId);
+    myRef.onDisconnect().remove(); // vanish cleanly when tab closes
+
+    // Send my position ~7 times per second (only when something changed)
+    let lastSent = '';
+    setInterval(() => {
+      const state = {
+        x: Math.round(player.x),
+        y: Math.round(player.y),
+        f: player.facing,
+        m: player.vx !== 0
+      };
+      const s = JSON.stringify(state);
+      if (s !== lastSent) {
+        lastSent = s;
+        myRef.set(state);
+      }
+    }, 140);
+
+    // Receive other players
+    const playersRef = net.db.ref('players');
+    playersRef.on('child_added',   snap => upsertRemote(snap.key, snap.val()));
+    playersRef.on('child_changed', snap => upsertRemote(snap.key, snap.val()));
+    playersRef.on('child_removed', snap => remotes.delete(snap.key));
+
+    function upsertRemote(id, d) {
+      if (id === myId || !d) return;
+      let rp = remotes.get(id);
+      if (!rp) {
+        rp = { x: d.x, y: d.y, tx: d.x, ty: d.y, facing: d.f, moving: d.m,
+               skin: skinFor(id), walkFrame: 0, walkTimer: 0 };
+        remotes.set(id, rp);
+      } else {
+        rp.tx = d.x; rp.ty = d.y; rp.facing = d.f; rp.moving = d.m;
+      }
+    }
+
+    // World sync: every block edit is one tiny write, received live
+    const worldRef = net.db.ref('world');
+    function applyBlock(key, t) {
+      const [r, c] = key.split('_').map(Number);
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) grid[r][c] = t || 0;
+    }
+    worldRef.on('child_added',   snap => applyBlock(snap.key, snap.val()));
+    worldRef.on('child_changed', snap => applyBlock(snap.key, snap.val()));
+  } catch (e) {
+    console.error('Firebase init failed:', e);
+    net.enabled = false;
+  }
 }
 
-async function netReadPlayers() {
-  if (!net.enabled) return;
-  try {
-    const res = await window.storage.list('mp:player:', true);
-    const keys = (res && res.keys) ? res.keys : [];
-    const seen = new Set();
-    for (const key of keys) {
-      const id = key.slice('mp:player:'.length);
-      if (id === myId) continue;
-      seen.add(id);
-      try {
-        const item = await window.storage.get(key, true);
-        if (!item) continue;
-        const d = JSON.parse(item.value);
-        if (Date.now() - d.t > 12000) continue; // stale ghost
-        let rp = remotes.get(id);
-        if (!rp) {
-          rp = { x: d.x, y: d.y, tx: d.x, ty: d.y, facing: d.facing,
-                 moving: d.moving, lastSeen: d.t, skin: skinFor(id), walkFrame: 0, walkTimer: 0 };
-          remotes.set(id, rp);
-        } else {
-          rp.tx = d.x; rp.ty = d.y;
-          rp.facing = d.facing; rp.moving = d.moving; rp.lastSeen = d.t;
-        }
-      } catch (e) { /* key vanished mid-read; fine */ }
-    }
-    // Drop players that disappeared or went stale
-    for (const [id, rp] of remotes) {
-      if (!seen.has(id) || Date.now() - rp.lastSeen > 12000) remotes.delete(id);
-    }
-    net.lastError = false;
-  } catch (e) { net.lastError = true; }
+if (!net.enabled) {
+  document.getElementById('setup-warning').style.display = 'block';
 }
 
-async function netSyncWorld() {
+function netSetBlock(r, c, t) {
   if (!net.enabled) return;
-  try {
-    if (net.worldDirty) {
-      // Upload our version
-      net.worldStamp = Date.now();
-      await window.storage.set('mp:world', JSON.stringify({ grid, t: net.worldStamp }), true);
-      net.worldDirty = false;
-    } else {
-      // Download if someone else changed it
-      try {
-        const item = await window.storage.get('mp:world', true);
-        if (item) {
-          const d = JSON.parse(item.value);
-          if (d.t > net.worldStamp && Array.isArray(d.grid)) {
-            grid = d.grid;
-            net.worldStamp = d.t;
-          }
-        }
-      } catch (e) { /* no world yet — first player creates it */ }
-    }
-    net.lastError = false;
-  } catch (e) { net.lastError = true; }
-}
-
-// Network loops (gentle intervals to respect storage rate limits)
-if (net.enabled) {
-  netSyncWorld();               // pull existing world on join
-  setInterval(netWriteSelf, 700);
-  setInterval(netReadPlayers, 1000);
-  setInterval(netSyncWorld, 1500);
-  addEventListener('beforeunload', () => {
-    try { window.storage.delete('mp:player:' + myId, true); } catch (e) {}
-  });
+  net.db.ref('world/' + r + '_' + c).set(t);
 }
 
 // ---- Input ----
@@ -340,7 +348,7 @@ function update() {
       const slot = slotForType(t);
       if (slot) slot.count++;
       spawnParticles(c, r, t === 1 ? PAL.grass : PAL.dirt);
-      net.worldDirty = true;
+      netSetBlock(r, c, 0);
     }
   }
   p.mineHeld = mineDown;
@@ -359,7 +367,7 @@ function update() {
       p.vy = 0;
       p.onGround = true;
       spawnParticles(c, target, slot.type === 1 ? PAL.grassHi : PAL.dirt, true);
-      net.worldDirty = true;
+      netSetBlock(target, c, slot.type);
     }
   }
   p.placeHeld = placeDown;
@@ -379,10 +387,10 @@ function update() {
     p.walkFrame = 0;
   }
 
-  // Smoothly glide remote players toward their latest reported position
+  // Glide remote players toward their latest reported position
   for (const rp of remotes.values()) {
-    rp.x += (rp.tx - rp.x) * 0.15;
-    rp.y += (rp.ty - rp.y) * 0.15;
+    rp.x += (rp.tx - rp.x) * 0.3;
+    rp.y += (rp.ty - rp.y) * 0.3;
     if (rp.moving) {
       rp.walkTimer++;
       if (rp.walkTimer > 6) { rp.walkTimer = 0; rp.walkFrame = 1 - rp.walkFrame; }
@@ -485,11 +493,9 @@ function drawInventory() {
   }
 }
 
-// Online status (top-right): dot + player count
 function drawNetStatus() {
   const count = 1 + remotes.size;
-  const ok = net.enabled && !net.lastError;
-  px(W - 22, 4, 3, 3, ok ? PAL.online : PAL.offline);
+  px(W - 22, 4, 3, 3, net.enabled ? PAL.online : PAL.offline);
   drawNumber(count, W - 15, 3, PAL.white);
 }
 
@@ -548,7 +554,6 @@ function loop() {
   drawCloud(190, 30);
   drawTiles();
 
-  // Remote players (drawn behind you, slightly ghosted)
   for (const rp of remotes.values()) {
     ctx.globalAlpha = 0.9;
     drawSprite(rp.x, rp.y, rp.facing, rp.walkFrame, rp.skin[0], rp.skin[1]);
