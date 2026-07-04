@@ -51,6 +51,48 @@
     font-size: 12px;
     max-width: 900px;
   }
+
+  /* ---- Mobile touch controls ---- */
+  #touch-controls {
+    display: none;
+    width: 100%;
+    max-width: 900px;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 10px;
+    gap: 10px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .tc-group { display: flex; gap: 10px; }
+  .tc-btn {
+    width: 64px;
+    height: 64px;
+    background: #2a2440;
+    border: 3px solid #3b3554;
+    color: #cfe8ff;
+    font-family: "Courier New", monospace;
+    font-size: 22px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tc-btn:active, .tc-btn.held {
+    background: #3b3554;
+    border-color: #cfe8ff;
+  }
+  .tc-btn.small { width: 56px; height: 56px; font-size: 13px; }
+  #btn-jump { border-color: #7c3524; color: #ff9a84; }
+
+  /* Show touch controls only on touch devices */
+  @media (pointer: coarse) {
+    #touch-controls { display: flex; }
+    #hud { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -62,6 +104,19 @@
 <div id="setup-warning">
   ⚠ Running in SOLO mode — Firebase config missing. Open this file and paste
   your Firebase config where it says PASTE YOUR FIREBASE CONFIG HERE.
+</div>
+
+<!-- Mobile touch controls (shown only on touch devices) -->
+<div id="touch-controls">
+  <div class="tc-group">
+    <div class="tc-btn" id="btn-left" data-key="KeyA">◀</div>
+    <div class="tc-btn" id="btn-right" data-key="KeyD">▶</div>
+  </div>
+  <div class="tc-group">
+    <div class="tc-btn small" id="btn-mine" data-key="KeyE">MINE</div>
+    <div class="tc-btn small" id="btn-place" data-key="KeyQ">PLACE</div>
+    <div class="tc-btn" id="btn-jump" data-key="Space">▲</div>
+  </div>
 </div>
 
 <!-- Firebase SDK -->
@@ -264,6 +319,43 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup', e => keys[e.code] = false);
+
+// ---- Mobile touch controls ----
+// Each button presses/releases the same virtual key the keyboard uses.
+for (const btn of document.querySelectorAll('.tc-btn')) {
+  const code = btn.dataset.key;
+  const press = e => { e.preventDefault(); keys[code] = true; btn.classList.add('held'); };
+  const release = e => { e.preventDefault(); keys[code] = false; btn.classList.remove('held'); };
+  btn.addEventListener('touchstart', press, { passive: false });
+  btn.addEventListener('touchend', release, { passive: false });
+  btn.addEventListener('touchcancel', release, { passive: false });
+  // Mouse fallback (e.g. touchscreen laptops)
+  btn.addEventListener('mousedown', press);
+  btn.addEventListener('mouseup', release);
+  btn.addEventListener('mouseleave', release);
+}
+
+// Tap the hotbar on the canvas to pick a slot
+function canvasTapToSlot(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const gx = (clientX - rect.left) * (W / rect.width);
+  const gy = (clientY - rect.top) * (H / rect.height);
+  const slotW = 26, slotH = 17, pad = 2;
+  for (let i = 0; i < SLOTS.length; i++) {
+    const sx = 2 + pad + i * (slotW + pad);
+    const sy = 2 + pad;
+    // generous touch target around each slot
+    if (gx >= sx - 2 && gx <= sx + slotW + 2 && gy >= sy - 2 && gy <= sy + slotH + 4) {
+      selectedSlot = i;
+      return;
+    }
+  }
+}
+canvas.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  if (t) canvasTapToSlot(t.clientX, t.clientY);
+}, { passive: true });
+canvas.addEventListener('mousedown', e => canvasTapToSlot(e.clientX, e.clientY));
 
 // ---- Particles ----
 const particles = [];
