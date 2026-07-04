@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel Baseplate — Online</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Courier New", monospace;
+    background: #1a1626;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 14px;
+  }
+
+  #game-wrap {
+    position: relative;
+    box-shadow: 0 0 0 4px #3b3554, 0 16px 50px rgba(0,0,0,.6);
+  }
+
+  canvas {
+    display: block;
+    width: 900px;
+    max-width: 96vw;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+
+  #hud {
+    color: #ff9a84;
+    background: #2a2440;
+    border: 3px solid #7c3524;
+    padding: 8px 16px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-wrap">
+  <canvas id="game" width="240" height="132"></canvas>
+</div>
+<div id="hud">A/D move · Space jump · E mine · Q place · 1/2 pick slot</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const W = canvas.width;   // 240
+const H = canvas.height;  // 132
+
+// ---- Tile world ----
+const TILE = 12;
+const COLS = W / TILE;    // 20
+const ROWS = H / TILE;    // 11
+
+// 0 = air, 1 = grass block, 2 = dirt block
+let grid = [];
+function freshWorld() {
+  const g = [];
+  for (let r = 0; r < ROWS; r++) g.push(new Array(COLS).fill(0));
+  for (let c = 0; c < COLS; c++) {
+    g[ROWS - 3][c] = 1;
+    g[ROWS - 2][c] = 2;
+    g[ROWS - 1][c] = 2;
+  }
+  return g;
+}
+grid = freshWorld();
+
+function tileAt(c, r) {
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return 0;
+  return grid[r][c];
+}
+function solid(c, r) { return tileAt(c, r) !== 0; }
+
+// ---- Physics ----
+const GRAVITY = 0.22;
+const MOVE_SPEED = 1.4;
+const JUMP_POWER = 4.2;
+
+// ---- Palette ----
+const PAL = {
+  skyHi: '#4fa4e8', skyMid1: '#63b2ec', skyMid2: '#79c2ef', skyLo: '#8ed0f0',
+  cloud: '#e8f6ff',
+  grass: '#5cba4a', grassHi: '#8fdd6e',
+  dirt: '#7a4a2b', dirtDk: '#5c3620',
+  white: '#ffffff', ink: '#20142a',
+  panel: 'rgba(32,20,42,.65)',
+  slot: 'rgba(255,255,255,.15)',
+  dim: 'rgba(255,255,255,.45)',
+  shadow: 'rgba(20,10,30,.3)',
+  online: '#7dff9a', offline: '#ffd166'
+};
+
+// Player color pairs (body, dark) — yours is picked from your id
+const SKINS = [
+  ['#f05a3c', '#b23a24'], // orange
+  ['#4a90e8', '#2c5ba8'], // blue
+  ['#a05ae8', '#6e35a8'], // purple
+  ['#e8c84a', '#a8892c'], // yellow
+  ['#4ae8b4', '#2ca87e'], // teal
+  ['#e84a90', '#a82c5f']  // pink
+];
+
+// ---- Hotbar / inventory ----
+const SLOTS = [
+  { type: 1, name: 'grass', count: 0 },
+  { type: 2, name: 'dirt',  count: 0 }
+];
+let selectedSlot = 0;
+function slotForType(t) { return SLOTS.find(s => s.type === t); }
+
+// ---- Local player ----
+const myId = 'p' + Math.random().toString(36).slice(2, 9);
+function skinFor(id) {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return SKINS[h % SKINS.length];
+}
+const mySkin = skinFor(myId);
+
+const player = {
+  x: W / 2 - 5,
+  y: (ROWS - 3) * TILE - 14,
+  w: 10, h: 14,
+  vx: 0, vy: 0,
+  onGround: false, facing: 1,
+  walkFrame: 0, walkTimer: 0,
+  spawnX: W / 2 - 5,
+  mineHeld: false,
+  placeHeld: false
+};
+
+// ---- Remote players ----
+// id -> { x, y, tx, ty, facing, moving, lastSeen, skin }
+const remotes = new Map();
+
+// ==========================================================
+// NETWORKING via shared artifact storage
+// Everyone who opens the PUBLISHED link shares these keys:
+//   mp:player:<id>  -> {x, y, facing, moving, t}
+//   mp:world        -> {grid, t}
+// Positions/world edits are visible to all visitors — that's
+// what makes it multiplayer.
+// ==========================================================
+const net = {
+  enabled: typeof window.storage !== 'undefined',
+  lastError: false,
+  worldStamp: 0,       // timestamp of the world version we last applied
+  worldDirty: false    // we changed a block and need to upload
+};
+
+async function netWriteSelf() {
+  if (!net.enabled) return;
+  try {
+    await window.storage.set('mp:player:' + myId, JSON.stringify({
+      x: Math.round(player.x),
+      y: Math.round(player.y),
+      facing: player.facing,
+      moving: player.vx !== 0,
+      t: Date.now()
+    }), true);
+    net.lastError = false;
+  } catch (e) { net.lastError = true; }
+}
+
+async function netReadPlayers() {
+  if (!net.enabled) return;
+  try {
+    const res = await window.storage.list('mp:player:', true);
+    const keys = (res && res.keys) ? res.keys : [];
+    const seen = new Set();
+    for (const key of keys) {
+      const id = key.slice('mp:player:'.length);
+      if (id === myId) continue;
+      seen.add(id);
+      try {
+        const item = await window.storage.get(key, true);
+        if (!item) continue;
+        const d = JSON.parse(item.value);
+        if (Date.now() - d.t > 12000) continue; // stale ghost
+        let rp = remotes.get(id);
+        if (!rp) {
+          rp = { x: d.x, y: d.y, tx: d.x, ty: d.y, facing: d.facing,
+                 moving: d.moving, lastSeen: d.t, skin: skinFor(id), walkFrame: 0, walkTimer: 0 };
+          remotes.set(id, rp);
+        } else {
+          rp.tx = d.x; rp.ty = d.y;
+          rp.facing = d.facing; rp.moving = d.moving; rp.lastSeen = d.t;
+        }
+      } catch (e) { /* key vanished mid-read; fine */ }
+    }
+    // Drop players that disappeared or went stale
+    for (const [id, rp] of remotes) {
+      if (!seen.has(id) || Date.now() - rp.lastSeen > 12000) remotes.delete(id);
+    }
+    net.lastError = false;
+  } catch (e) { net.lastError = true; }
+}
+
+async function netSyncWorld() {
+  if (!net.enabled) return;
+  try {
+    if (net.worldDirty) {
+      // Upload our version
+      net.worldStamp = Date.now();
+      await window.storage.set('mp:world', JSON.stringify({ grid, t: net.worldStamp }), true);
+      net.worldDirty = false;
+    } else {
+      // Download if someone else changed it
+      try {
+        const item = await window.storage.get('mp:world', true);
+        if (item) {
+          const d = JSON.parse(item.value);
+          if (d.t > net.worldStamp && Array.isArray(d.grid)) {
+            grid = d.grid;
+            net.worldStamp = d.t;
+          }
+        }
+      } catch (e) { /* no world yet — first player creates it */ }
+    }
+    net.lastError = false;
+  } catch (e) { net.lastError = true; }
+}
+
+// Network loops (gentle intervals to respect storage rate limits)
+if (net.enabled) {
+  netSyncWorld();               // pull existing world on join
+  setInterval(netWriteSelf, 700);
+  setInterval(netReadPlayers, 1000);
+  setInterval(netSyncWorld, 1500);
+  addEventListener('beforeunload', () => {
+    try { window.storage.delete('mp:player:' + myId, true); } catch (e) {}
+  });
+}
+
+// ---- Input ----
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  const m = e.code.match(/^Digit([1-9])$/);
+  if (m) {
+    const i = Number(m[1]) - 1;
+    if (i < SLOTS.length) selectedSlot = i;
+  }
+});
+addEventListener('keyup', e => keys[e.code] = false);
+
+// ---- Particles ----
+const particles = [];
+function spawnParticles(c, r, color, up = false) {
+  for (let i = 0; i < 6; i++) {
+    particles.push({
+      x: c * TILE + 3 + Math.random() * 6,
+      y: r * TILE + 3 + Math.random() * 6,
+      vx: (Math.random() - 0.5) * 1.6,
+      vy: up ? -Math.random() * 2 : -Math.random() * 1.5,
+      life: 20 + Math.random() * 10,
+      color
+    });
+  }
+}
+
+// ---- Tile collision movement ----
+function moveAndCollide(p) {
+  p.x += p.vx;
+  if (p.vx > 0) {
+    const c = Math.floor((p.x + p.w) / TILE);
+    for (let r = Math.floor(p.y / TILE); r <= Math.floor((p.y + p.h - 1) / TILE); r++) {
+      if (solid(c, r)) { p.x = c * TILE - p.w; break; }
+    }
+  } else if (p.vx < 0) {
+    const c = Math.floor(p.x / TILE);
+    for (let r = Math.floor(p.y / TILE); r <= Math.floor((p.y + p.h - 1) / TILE); r++) {
+      if (solid(c, r)) { p.x = (c + 1) * TILE; break; }
+    }
+  }
+  if (p.x < 0) p.x = 0;
+  if (p.x + p.w > W) p.x = W - p.w;
+
+  p.y += p.vy;
+  p.onGround = false;
+  if (p.vy > 0) {
+    const r = Math.floor((p.y + p.h) / TILE);
+    for (let c = Math.floor(p.x / TILE); c <= Math.floor((p.x + p.w - 1) / TILE); c++) {
+      if (solid(c, r)) {
+        p.y = r * TILE - p.h;
+        p.vy = 0;
+        p.onGround = true;
+        break;
+      }
+    }
+  } else if (p.vy < 0) {
+    const r = Math.floor(p.y / TILE);
+    for (let c = Math.floor(p.x / TILE); c <= Math.floor((p.x + p.w - 1) / TILE); c++) {
+      if (solid(c, r)) {
+        p.y = (r + 1) * TILE;
+        p.vy = 0;
+        break;
+      }
+    }
+  }
+}
+
+// ---- Update ----
+function update() {
+  const p = player;
+
+  p.vx = 0;
+  if (keys['KeyA']) { p.vx = -MOVE_SPEED; p.facing = -1; }
+  if (keys['KeyD']) { p.vx =  MOVE_SPEED; p.facing =  1; }
+
+  if (keys['Space'] && p.onGround) p.vy = -JUMP_POWER;
+
+  p.vy += GRAVITY;
+  if (p.vy > 5) p.vy = 5;
+
+  moveAndCollide(p);
+
+  const c = Math.floor((p.x + p.w / 2) / TILE);
+
+  // E: mine block under feet
+  const mineDown = keys['KeyE'];
+  if (mineDown && !p.mineHeld) {
+    const r = Math.floor((p.y + p.h) / TILE);
+    if (solid(c, r)) {
+      const t = grid[r][c];
+      grid[r][c] = 0;
+      const slot = slotForType(t);
+      if (slot) slot.count++;
+      spawnParticles(c, r, t === 1 ? PAL.grass : PAL.dirt);
+      net.worldDirty = true;
+    }
+  }
+  p.mineHeld = mineDown;
+
+  // Q: place selected block under you, teleport on top
+  const placeDown = keys['KeyQ'];
+  const slot = SLOTS[selectedSlot];
+  if (placeDown && !p.placeHeld && slot.count > 0) {
+    const rBelow = Math.floor((p.y + p.h) / TILE);
+    const target = solid(c, rBelow) ? rBelow - 1 : rBelow;
+    if (target >= 0 && !solid(c, target)) {
+      slot.count--;
+      grid[target][c] = slot.type;
+      p.x = c * TILE + (TILE - p.w) / 2;
+      p.y = target * TILE - p.h;
+      p.vy = 0;
+      p.onGround = true;
+      spawnParticles(c, target, slot.type === 1 ? PAL.grassHi : PAL.dirt, true);
+      net.worldDirty = true;
+    }
+  }
+  p.placeHeld = placeDown;
+
+  // Fell out → respawn from the sky
+  if (p.y > H + 20) {
+    p.x = p.spawnX;
+    p.y = -20;
+    p.vy = 0;
+  }
+
+  // Walk animation
+  if (p.vx !== 0 && p.onGround) {
+    p.walkTimer++;
+    if (p.walkTimer > 6) { p.walkTimer = 0; p.walkFrame = 1 - p.walkFrame; }
+  } else {
+    p.walkFrame = 0;
+  }
+
+  // Smoothly glide remote players toward their latest reported position
+  for (const rp of remotes.values()) {
+    rp.x += (rp.tx - rp.x) * 0.15;
+    rp.y += (rp.ty - rp.y) * 0.15;
+    if (rp.moving) {
+      rp.walkTimer++;
+      if (rp.walkTimer > 6) { rp.walkTimer = 0; rp.walkFrame = 1 - rp.walkFrame; }
+    } else {
+      rp.walkFrame = 0;
+    }
+  }
+}
+
+// ---- Pixel helpers ----
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+}
+
+const DIGITS = {
+  '0': [7,5,5,5,7], '1': [2,6,2,2,7], '2': [7,1,7,4,7], '3': [7,1,7,1,7],
+  '4': [5,5,7,1,1], '5': [7,4,7,1,7], '6': [7,4,7,5,7], '7': [7,1,1,1,1],
+  '8': [7,5,7,5,7], '9': [7,5,7,1,7]
+};
+function drawNumber(n, x, y, color) {
+  const s = String(n);
+  for (let i = 0; i < s.length; i++) {
+    const rows = DIGITS[s[i]];
+    for (let r = 0; r < 5; r++) {
+      for (let b = 0; b < 3; b++) {
+        if (rows[r] & (4 >> b)) px(x + i * 4 + b, y + r, 1, 1, color);
+      }
+    }
+  }
+}
+
+// ---- Drawing ----
+function drawSky() {
+  px(0, 0, W, H, PAL.skyHi);
+  px(0, 48, W, 20, PAL.skyMid1);
+  px(0, 68, W, 20, PAL.skyMid2);
+  px(0, 88, W, H - 88, PAL.skyLo);
+}
+
+function drawCloud(x, y) {
+  px(x + 2, y,     10, 3, PAL.cloud);
+  px(x,     y + 3, 16, 3, PAL.cloud);
+  px(x + 3, y + 6, 11, 2, PAL.cloud);
+}
+
+function drawTiles() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = grid[r][c];
+      if (t === 0) continue;
+      const x = c * TILE, y = r * TILE;
+      if (t === 1) {
+        px(x, y, TILE, 3, PAL.grassHi);
+        px(x, y + 3, TILE, 4, PAL.grass);
+        px(x, y + 7, TILE, TILE - 7, PAL.dirt);
+        px(x + 3, y - 2, 6, 2, PAL.grass);
+        px(x + 4, y - 3, 4, 1, PAL.grassHi);
+      } else {
+        px(x, y, TILE, TILE, PAL.dirt);
+        px(x + 2, y + 3, 3, 2, PAL.dirtDk);
+        px(x + 7, y + 8, 2, 2, PAL.dirtDk);
+      }
+      px(x, y, 1, TILE, 'rgba(0,0,0,.12)');
+    }
+  }
+}
+
+function drawMiniBlock(t, x, y) {
+  if (t === 1) {
+    px(x, y, 8, 2, PAL.grassHi);
+    px(x, y + 2, 8, 2, PAL.grass);
+    px(x, y + 4, 8, 4, PAL.dirt);
+  } else {
+    px(x, y, 8, 8, PAL.dirt);
+    px(x + 1, y + 2, 2, 1, PAL.dirtDk);
+    px(x + 5, y + 5, 2, 1, PAL.dirtDk);
+  }
+}
+
+function drawInventory() {
+  const slotW = 26, slotH = 17, pad = 2;
+  const panelW = SLOTS.length * (slotW + pad) + pad;
+  px(2, 2, panelW, slotH + pad * 2, PAL.panel);
+
+  for (let i = 0; i < SLOTS.length; i++) {
+    const s = SLOTS[i];
+    const sx = 2 + pad + i * (slotW + pad);
+    const sy = 2 + pad;
+    px(sx, sy, slotW, slotH, PAL.slot);
+    drawNumber(i + 1, sx + 2, sy + 1, PAL.dim);
+    drawMiniBlock(s.type, sx + 2, sy + 7);
+    drawNumber(s.count, sx + 13, sy + 9, PAL.white);
+    if (i === selectedSlot) {
+      px(sx, sy, slotW, 1, PAL.white);
+      px(sx, sy + slotH - 1, slotW, 1, PAL.white);
+      px(sx, sy, 1, slotH, PAL.white);
+      px(sx + slotW - 1, sy, 1, slotH, PAL.white);
+    }
+  }
+}
+
+// Online status (top-right): dot + player count
+function drawNetStatus() {
+  const count = 1 + remotes.size;
+  const ok = net.enabled && !net.lastError;
+  px(W - 22, 4, 3, 3, ok ? PAL.online : PAL.offline);
+  drawNumber(count, W - 15, 3, PAL.white);
+}
+
+function drawSprite(x, y, facing, walkFrame, body, dark) {
+  x = Math.round(x) - 1;
+  y = Math.round(y);
+  const f = facing;
+
+  const legLift = walkFrame === 1 ? 1 : 0;
+  px(x + 2, y + 11 - legLift, 3, 3 + legLift, dark);
+  px(x + 7, y + 11 - (1 - legLift), 3, 3 + (1 - legLift), dark);
+
+  px(x + 1, y + 3, 10, 8, body);
+  px(x + 2, y, 8, 4, body);
+  px(x + 1, y + 9, 10, 2, dark);
+
+  const ex = f === 1 ? x + 6 : x + 3;
+  px(ex, y + 1, 2, 2, PAL.white);
+  px(ex + 3 * f, y + 1, 2, 2, PAL.white);
+  px(ex + (f === 1 ? 1 : 0),         y + 2, 1, 1, PAL.ink);
+  px(ex + 3 * f + (f === 1 ? 1 : 0), y + 2, 1, 1, PAL.ink);
+}
+
+function drawShadow(pxx, pyy, pw, ph) {
+  const c = Math.floor((pxx + pw / 2) / TILE);
+  for (let r = Math.floor((pyy + ph) / TILE); r < ROWS; r++) {
+    if (solid(c, r)) {
+      px(pxx, r * TILE - 1, pw, 2, PAL.shadow);
+      return;
+    }
+  }
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const q = particles[i];
+    q.vy += 0.12;
+    q.x += q.vx;
+    q.y += q.vy;
+    q.life--;
+    if (q.life <= 0 || q.y > H) particles.splice(i, 1);
+  }
+}
+function drawParticles() {
+  for (const q of particles) px(q.x, q.y, 2, 2, q.color);
+}
+
+// ---- Game loop ----
+function loop() {
+  update();
+  updateParticles();
+
+  drawSky();
+  drawCloud(30, 18);
+  drawCloud(120, 10);
+  drawCloud(190, 30);
+  drawTiles();
+
+  // Remote players (drawn behind you, slightly ghosted)
+  for (const rp of remotes.values()) {
+    ctx.globalAlpha = 0.9;
+    drawSprite(rp.x, rp.y, rp.facing, rp.walkFrame, rp.skin[0], rp.skin[1]);
+    ctx.globalAlpha = 1;
+  }
+
+  if (!player.onGround) drawShadow(player.x, player.y, player.w, player.h);
+  drawSprite(player.x, player.y, player.facing, player.walkFrame, mySkin[0], mySkin[1]);
+  drawParticles();
+  drawInventory();
+  drawNetStatus();
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+
+</body>
+</html>
