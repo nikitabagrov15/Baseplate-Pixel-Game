@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>Pixel Baseplate — Online</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -190,10 +190,53 @@
   .tc-btn.small { width: 56px; height: 56px; font-size: 13px; }
   #btn-jump { border-color: #7c3524; color: #ff9a84; }
 
-  /* Show touch controls only on touch devices */
+  /* ---- Touch devices: fit the whole game + controls on screen,
+     portrait or landscape, no scrolling. Desktop is untouched. ---- */
   @media (pointer: coarse) {
     #touch-controls { display: flex; }
     #hud { display: none; }
+
+    html, body {
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+    }
+    body {
+      justify-content: flex-start;
+      min-height: 100dvh;
+      padding: max(6px, env(safe-area-inset-top)) 0 max(10px, env(safe-area-inset-bottom));
+      gap: 8px;
+    }
+    /* Scale the game to whatever fits: full width in portrait,
+       height-limited in landscape (controls need ~120px below) */
+    canvas#game {
+      width: min(100vw, calc((100dvh - 130px) * 1.8182));
+      max-width: 100vw;
+      height: auto;
+    }
+    .tc-btn { width: 56px; height: 56px; font-size: 20px; }
+    .tc-btn.small { width: 48px; height: 48px; font-size: 11px; }
+    #touch-controls { padding: 0 max(8px, env(safe-area-inset-left)); }
+    #btn-fs { display: flex; }
+  }
+
+  /* Fullscreen toggle (mobile only) */
+  #btn-fs {
+    display: none;
+    position: fixed;
+    top: max(6px, env(safe-area-inset-top));
+    right: max(6px, env(safe-area-inset-right));
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    background: rgba(42, 36, 64, .85);
+    border: 3px solid #3b3554;
+    color: #cfe8ff;
+    font-size: 18px;
+    z-index: 20;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
 </style>
 </head>
@@ -209,6 +252,8 @@
   <div id="hat-row"></div>
   <button id="name-play">PLAY</button>
 </div>
+
+<div id="btn-fs">⛶</div>
 
 <div id="game-wrap">
   <canvas id="game" width="240" height="132"></canvas>
@@ -1210,6 +1255,19 @@ const craftBtn = document.getElementById('btn-craft');
 const toggleCraft = e => { e.preventDefault(); invOpen = !invOpen; grabbed = null; };
 craftBtn.addEventListener('touchstart', toggleCraft, { passive: false });
 craftBtn.addEventListener('mousedown', toggleCraft);
+
+// Fullscreen toggle (mobile)
+const fsBtn = document.getElementById('btn-fs');
+fsBtn.addEventListener('click', () => {
+  try {
+    const de = document.documentElement;
+    if (!document.fullscreenElement) {
+      (de.requestFullscreen || de.webkitRequestFullscreen || function(){}).call(de);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+    }
+  } catch (e) {}
+});
 
 // CHAT button opens/closes the chat input
 const chatBtn = document.getElementById('btn-chat');
