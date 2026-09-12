@@ -52,6 +52,108 @@
     max-width: 900px;
   }
 
+  /* ---- Name entry overlay ---- */
+  #name-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 14, 32, .92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    z-index: 10;
+  }
+  #name-overlay h1 {
+    color: #cfe8ff;
+    font-family: "Courier New", monospace;
+    font-size: 22px;
+    letter-spacing: 3px;
+  }
+  #name-input {
+    background: #2a2440;
+    border: 3px solid #3b3554;
+    color: #fff;
+    font-family: "Courier New", monospace;
+    font-size: 20px;
+    letter-spacing: 2px;
+    padding: 10px 14px;
+    width: 240px;
+    text-align: center;
+    text-transform: uppercase;
+    outline: none;
+  }
+  #name-input:focus { border-color: #cfe8ff; }
+  #name-play {
+    background: #2a2440;
+    border: 3px solid #7c3524;
+    color: #ff9a84;
+    font-family: "Courier New", monospace;
+    font-size: 18px;
+    letter-spacing: 2px;
+    padding: 10px 30px;
+    cursor: pointer;
+  }
+  #name-play:active { background: #3b3554; }
+
+  #preview {
+    width: 90px;
+    height: 120px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  .picker-label {
+    color: #8a84a8;
+    font-family: "Courier New", monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    margin-bottom: -8px;
+  }
+  #color-row, #hat-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 420px;
+  }
+  .swatch {
+    width: 34px;
+    height: 34px;
+    border: 3px solid #3b3554;
+    cursor: pointer;
+  }
+  .swatch.sel { border-color: #ffffff; }
+  .hat-opt {
+    background: #2a2440;
+    border: 3px solid #3b3554;
+    color: #cfe8ff;
+    font-family: "Courier New", monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  .hat-opt.sel { border-color: #ffffff; }
+
+  /* ---- Chat input ---- */
+  #chat-input {
+    display: none;
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    width: 60%;
+    background: rgba(26, 22, 38, .92);
+    border: 2px solid #cfe8ff;
+    color: #fff;
+    font-family: "Courier New", monospace;
+    font-size: 15px;
+    letter-spacing: 1px;
+    padding: 6px 10px;
+    text-transform: uppercase;
+    outline: none;
+    z-index: 5;
+  }
+
   /* ---- Mobile touch controls ---- */
   #touch-controls {
     display: none;
@@ -97,10 +199,22 @@
 </head>
 <body>
 
+<div id="name-overlay">
+  <h1>PIXEL BASEPLATE</h1>
+  <canvas id="preview" width="18" height="24"></canvas>
+  <input id="name-input" maxlength="10" placeholder="YOUR NAME" autocomplete="off">
+  <div class="picker-label">COLOR</div>
+  <div id="color-row"></div>
+  <div class="picker-label">HAT</div>
+  <div id="hat-row"></div>
+  <button id="name-play">PLAY</button>
+</div>
+
 <div id="game-wrap">
   <canvas id="game" width="240" height="132"></canvas>
+  <input id="chat-input" maxlength="40" placeholder="SAY SOMETHING..." autocomplete="off">
 </div>
-<div id="hud">A/D move · Space jump · E mine · Q place · 1/2 pick slot</div>
+<div id="hud">A/D move · Space jump · E mine · Q place · C inventory · T chat · 1-7 slot</div>
 <div id="setup-warning">
   ⚠ Running in SOLO mode — Firebase config missing. Open this file and paste
   your Firebase config where it says PASTE YOUR FIREBASE CONFIG HERE.
@@ -111,8 +225,10 @@
   <div class="tc-group">
     <div class="tc-btn" id="btn-left" data-key="KeyA">◀</div>
     <div class="tc-btn" id="btn-right" data-key="KeyD">▶</div>
+    <div class="tc-btn small" id="btn-chat">CHAT</div>
   </div>
   <div class="tc-group">
+    <div class="tc-btn small" id="btn-craft">INV</div>
     <div class="tc-btn small" id="btn-mine" data-key="KeyE">MINE</div>
     <div class="tc-btn small" id="btn-place" data-key="KeyQ">PLACE</div>
     <div class="tc-btn" id="btn-jump" data-key="Space">▲</div>
@@ -153,34 +269,455 @@ const firebaseConfig = {
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
+const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
+// ---- Player name ----
+let myName = 'PLAYER';
+let gameStarted = false;
+
+function sanitizeName(s) {
+  s = String(s || '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').trim().slice(0, 10);
+  return s || 'PLAYER';
+}
+// Try to remember the name between visits (storage may be unavailable in some sandboxes)
+try {
+  const saved = localStorage.getItem('bp_name');
+  if (saved) document.getElementById('name-input').value = saved;
+} catch (e) {}
+
+function startGame() {
+  myName = sanitizeName(document.getElementById('name-input').value);
+  try {
+    localStorage.setItem('bp_name', myName);
+    localStorage.setItem('bp_skin', String(mySkinIndex));
+    localStorage.setItem('bp_hat', String(myHat));
+  } catch (e) {}
+  document.getElementById('name-overlay').style.display = 'none';
+  gameStarted = true;
+}
+document.getElementById('name-play').addEventListener('click', startGame);
+document.getElementById('name-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startGame();
+  e.stopPropagation(); // don't let typing move the character
+});
+
+// ---- Skin & hat pickers (title screen) ----
+// These run after SKINS/HATS/drawSprite exist, so defer with a function
+function initPickers() {
+  try {
+    const s = localStorage.getItem('bp_skin');
+    const h = localStorage.getItem('bp_hat');
+    if (s !== null && SKINS[+s]) mySkinIndex = +s;
+    if (h !== null && HATS[+h]) myHat = +h;
+  } catch (e) {}
+
+  const colorRow = document.getElementById('color-row');
+  const hatRow = document.getElementById('hat-row');
+
+  SKINS.forEach((skin, i) => {
+    const el = document.createElement('div');
+    el.className = 'swatch';
+    el.style.background = skin[0];
+    el.addEventListener('click', () => { mySkinIndex = i; refreshPickers(); });
+    colorRow.appendChild(el);
+  });
+  HATS.forEach((name, i) => {
+    const el = document.createElement('div');
+    el.className = 'hat-opt';
+    el.textContent = name;
+    el.addEventListener('click', () => { myHat = i; refreshPickers(); });
+    hatRow.appendChild(el);
+  });
+  refreshPickers();
+}
+
+function refreshPickers() {
+  document.querySelectorAll('.swatch').forEach((el, i) =>
+    el.classList.toggle('sel', i === mySkinIndex));
+  document.querySelectorAll('.hat-opt').forEach((el, i) =>
+    el.classList.toggle('sel', i === myHat));
+  drawPreview();
+}
+
+// Live character preview: temporarily point the pixel helper at the preview canvas
+function drawPreview() {
+  const pc = document.getElementById('preview');
+  const pctx = pc.getContext('2d');
+  pctx.imageSmoothingEnabled = false;
+  const prev = curCtx;
+  curCtx = pctx;
+  pctx.clearRect(0, 0, pc.width, pc.height);
+  const skin = SKINS[mySkinIndex];
+  drawSprite(4, 8, 1, 0, skin[0], skin[1], myHat);
+  curCtx = prev;
+}
+
+// ---- Chat ----
+const chatLog = [];          // { id, name, text, ts }
+let chatOpen = false;
+const chatInput = document.getElementById('chat-input');
+const CHAT_SHOW_MS = 9000;
+
+function sanitizeChat(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9 .,!?'\-:\/]/g, '').trim().slice(0, 40);
+}
+function openChat() {
+  if (!gameStarted || player.dead) return;
+  chatOpen = true;
+  chatInput.style.display = 'block';
+  chatInput.value = '';
+  setTimeout(() => chatInput.focus(), 0);
+}
+function closeChat() {
+  chatOpen = false;
+  chatInput.style.display = 'none';
+  chatInput.blur();
+}
+function pushChat(msg) {
+  chatLog.push(msg);
+  if (chatLog.length > 30) chatLog.shift();
+}
+function sendChat() {
+  const raw = chatInput.value;
+  closeChat();
+  // Slash-commands go to the admin console, not to chat
+  if (raw.trim().startsWith('/')) { handleCommand(raw.trim()); return; }
+  const text = sanitizeChat(raw);
+  if (!text) return;
+  const msg = { id: myId, name: myName, text, ts: Date.now() };
+  if (net.enabled) {
+    try { net.db.ref('v3/chat').push({ id: myId, n: myName, t: text, ts: Date.now() }); }
+    catch (e) { pushChat(msg); }
+  } else {
+    pushChat(msg); // solo mode: local echo
+  }
+}
+
+// ---- Admin console (open chat, type /login <password>) ----
+let adminMode = false;
+let adminNoclip = false;
+let adminSpeed = 1;
+const ADMIN_PASSWORD = 'LIPW';
+const GIVE_NAMES = {
+  GRASS: 1, DIRT: 2, STONE: 3, WOOD: 5, LEAVES: 6, PLANKS: 7, BRICKS: 8,
+  COAL: 9, IRON: 10, DIAMOND: 11, TORCH: 12,
+  PICK: 13, AXE: 14, SHOVEL: 15,
+  IRONPICK: 16, IRONAXE: 17, IRONSHOVEL: 18,
+  DIAPICK: 19, DIAAXE: 20, DIASHOVEL: 21,
+  TNT: 24, FLINT: 25
+};
+
+function sysMsg(text) {
+  pushChat({ id: '', name: 'SYSTEM', text: sanitizeChat(text), ts: Date.now() });
+}
+
+function handleCommand(raw) {
+  const parts = raw.slice(1).toUpperCase().split(/\s+/).filter(Boolean);
+  const cmd = parts[0] || '';
+
+  if (cmd === 'LOGIN' || cmd === 'ADMIN') {
+    if (parts[1] === ADMIN_PASSWORD) {
+      adminMode = true;
+      sysMsg('ADMIN MODE ON. TYPE /HELP FOR COMMANDS');
+    } else {
+      sysMsg('WRONG PASSWORD');
+    }
+    return;
+  }
+  if (!adminMode) { sysMsg('NOT LOGGED IN. USE /LOGIN'); return; }
+
+  switch (cmd) {
+    case 'HELP':
+      sysMsg('NOCLIP, GIVE ITEM N, HEAL, KILL, TP SPAWN-TOP-BEDROCK-N, SPEED N, RESET, LOGOUT');
+      break;
+    case 'NOCLIP':
+    case 'FLY':
+      adminNoclip = !adminNoclip;
+      sysMsg('NOCLIP ' + (adminNoclip ? 'ON: WASD TO FLY' : 'OFF'));
+      break;
+    case 'GIVE': {
+      const t = GIVE_NAMES[parts[1]];
+      const n = Math.max(1, Math.min(99, parseInt(parts[2]) || 1));
+      if (!t) { sysMsg('UNKNOWN ITEM. TRY: ' + Object.keys(GIVE_NAMES).slice(0, 6).join(', ') + '...'); break; }
+      addItem(t, n);
+      sysMsg('GAVE ' + n + ' ' + parts[1]);
+      break;
+    }
+    case 'HEAL':
+      player.hp = player.maxHp;
+      sysMsg('HEALED');
+      break;
+    case 'KILL':
+      player.hp = 0; player.dead = true; player.deathTimer = 0;
+      break;
+    case 'TP': {
+      const a = parts[1];
+      if (a === 'SPAWN') { player.x = player.spawnX; player.y = GROUND_ROW * TILE - 14; }
+      else if (a === 'TOP') { player.y = 2 * TILE; }
+      else if (a === 'BEDROCK') { player.y = (ROWS - 8) * TILE; }
+      else if (!isNaN(parseInt(a))) { player.x = Math.max(0, Math.min(COLS - 1, parseInt(a))) * TILE; }
+      else { sysMsg('TP SPAWN, TOP, BEDROCK, OR A COLUMN NUMBER'); break; }
+      player.vy = 0; player.fallY = player.y;
+      sysMsg('TELEPORTED');
+      break;
+    }
+    case 'SPEED': {
+      const s = parseFloat(parts[1]);
+      adminSpeed = (!isNaN(s) && s > 0 && s <= 10) ? s : 1;
+      sysMsg('SPEED X' + adminSpeed);
+      break;
+    }
+    case 'RESET':
+      if (parts[1] !== 'CONFIRM') { sysMsg('THIS WIPES ALL WORLD EDITS FOR EVERYONE. TYPE /RESET CONFIRM'); break; }
+      if (net.enabled) {
+        try {
+          net.db.ref('v3/world').remove();
+          net.db.ref('v3/bg').remove();
+          net.db.ref('v3/torch').remove();
+          sysMsg('WORLD RESET. RELOADING...');
+          setTimeout(() => location.reload(), 800);
+        } catch (e) { sysMsg('RESET FAILED'); }
+      } else {
+        location.reload();
+      }
+      break;
+    case 'LOGOUT':
+      adminMode = false; adminNoclip = false; adminSpeed = 1;
+      sysMsg('LOGGED OUT');
+      break;
+    default:
+      sysMsg('UNKNOWN COMMAND. TYPE /HELP');
+  }
+}
+chatInput.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') sendChat();
+  if (e.key === 'Escape') closeChat();
+});
 
 const W = canvas.width;   // 240
 const H = canvas.height;  // 132
 
 // ---- Tile world ----
 const TILE = 12;
-const COLS = W / TILE;    // 20
-const ROWS = H / TILE;    // 11
+const COLS = 400;            // world is 20 screens wide — a proper trek!
+const SKY_ROWS = 53;         // 53 blocks of open sky above the surface...
+const GROUND_ROW = SKY_ROWS; // ...then the top of the world (build limit)
+const STONE_ROWS = 53;       // stone goes 53 blocks down...
+const ROWS = GROUND_ROW + 3 + STONE_ROWS + 1; // ...then bedrock you can't break
+const WORLD_W = COLS * TILE;
+const WORLD_H = ROWS * TILE;
 
-// 0 = air, 1 = grass block, 2 = dirt block
+// ---- Camera (follows the player, stops at world edges) ----
+let camX = 0;
+let camY = 0;
+
+// 0 = air, 1 = grass, 2 = dirt, 3 = stone, 4 = bedrock (unbreakable),
+// 5 = wood, 6 = leaves
 const grid = [];
 for (let r = 0; r < ROWS; r++) grid.push(new Array(COLS).fill(0));
 for (let c = 0; c < COLS; c++) {
-  grid[ROWS - 3][c] = 1;
-  grid[ROWS - 2][c] = 2;
-  grid[ROWS - 1][c] = 2;
+  grid[GROUND_ROW][c] = 1;         // grass surface
+  grid[GROUND_ROW + 1][c] = 2;     // dirt
+  grid[GROUND_ROW + 2][c] = 2;     // dirt
+  for (let r = GROUND_ROW + 3; r < ROWS - 1; r++) grid[r][c] = 3; // stone
+  grid[ROWS - 1][c] = 4;           // bedrock — the floor of the world
+}
+
+// ---- Background wall layer (walk-through, darker, drawn behind everything) ----
+// 0 = none, otherwise a block type. Wall items use type + 100.
+const bgGrid = [];
+for (let r = 0; r < ROWS; r++) bgGrid.push(new Array(COLS).fill(0));
+
+// ---- Torches (sparse: set of "r_c" keys) ----
+const torches = new Set();
+const torchKey = (r, c) => r + '_' + c;
+
+// ---- Lighting ----
+// Light levels 0 (pitch black) .. 8 (full). Sky light pours down open
+// columns; torches radiate; light BFS-spreads, dimming per tile (more
+// through solid rock). Without torches, deep mines are EXTREMELY dark.
+const LIGHT_MAX = 8;
+const light = [];
+for (let r = 0; r < ROWS; r++) light.push(new Uint8Array(COLS));
+// Liquid pockets are revealed as a whole once ANY tile of them touches air
+const revealedLiquid = [];
+for (let r = 0; r < ROWS; r++) revealedLiquid.push(new Uint8Array(COLS));
+let lightDirty = true;
+
+function computeLiquidReveal() {
+  const queue = [];
+  for (let r = 0; r < ROWS; r++) {
+    revealedLiquid[r].fill(0);
+    for (let c = 0; c < COLS; c++) {
+      if (isLiquid(grid[r][c]) && isExposed(c, r)) {
+        revealedLiquid[r][c] = 1;
+        queue.push(r * COLS + c);
+      }
+    }
+  }
+  // spread the reveal through connected liquid
+  for (let qi = 0; qi < queue.length; qi++) {
+    const idx = queue[qi];
+    const r = (idx / COLS) | 0, c = idx % COLS;
+    for (const [nr, nc] of [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]) {
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      if (isLiquid(grid[nr][nc]) && !revealedLiquid[nr][nc]) {
+        revealedLiquid[nr][nc] = 1;
+        queue.push(nr * COLS + nc);
+      }
+    }
+  }
+}
+
+function computeLight() {
+  lightDirty = false;
+  computeLiquidReveal();
+  const queue = [];
+  for (let r = 0; r < ROWS; r++) light[r].fill(0);
+
+  // Sky light: falls from the top of each column until it hits a solid tile
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS; r++) {
+      if (grid[r][c] !== 0) break;
+      light[r][c] = LIGHT_MAX;
+      queue.push(r * COLS + c);
+    }
+  }
+  // Torches are full-strength sources
+  for (const key of torches) {
+    const [r, c] = key.split('_').map(Number);
+    if (r >= 0 && r < ROWS && c >= 0 && c < COLS && light[r][c] < LIGHT_MAX) {
+      light[r][c] = LIGHT_MAX;
+      queue.push(r * COLS + c);
+    }
+  }
+  // Exposed lava glows (hidden lava stays dark so it can't be spotted)
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] === 23 && light[r][c] < 7 && revealedLiquid[r][c]) {
+        light[r][c] = 7;
+        queue.push(r * COLS + c);
+      }
+    }
+  }
+  // Spread: -1 per air tile, -3 through solid blocks
+  for (let qi = 0; qi < queue.length; qi++) {
+    const idx = queue[qi];
+    const r = (idx / COLS) | 0, c = idx % COLS;
+    const l = light[r][c];
+    if (l <= 1) continue;
+    const nbs = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]];
+    for (const [nr, nc] of nbs) {
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      const cost = grid[nr][nc] === 0 ? 1 : 3;
+      const nl = l - cost;
+      if (nl > light[nr][nc]) {
+        light[nr][nc] = nl;
+        queue.push(nr * COLS + nc);
+      }
+    }
+  }
+}
+
+// ---- Trees (deterministic, so every player sees the same forest) ----
+function hash(n) {
+  n = (n ^ 61) ^ (n >>> 16);
+  n = (n + (n << 3)) | 0;
+  n = n ^ (n >>> 4);
+  n = Math.imul(n, 0x27d4eb2d);
+  n = n ^ (n >>> 15);
+  return n >>> 0;
+}
+
+// ---- Ores (hidden in the stone — they look like stone until you dig them open) ----
+// 9 = coal, 10 = iron, 11 = diamond
+const STONE_TOP = GROUND_ROW + 3;
+for (let c = 0; c < COLS; c++) {
+  for (let r = STONE_TOP; r < ROWS - 1; r++) {
+    const depth = r - STONE_TOP;               // 0 at top of stone, 52 at bedrock
+    const h = hash(c * 2654435761 + r * 97);
+    if (depth > 38 && h % 26 === 0) grid[r][c] = 11;       // diamond: rare, deep
+    else if (depth > 12 && h % 15 === 0) grid[r][c] = 10;  // iron: mid-depth
+    else if (h % 11 === 0) grid[r][c] = 9;                 // coal: everywhere
+  }
+}
+
+// ---- Hidden liquid pockets (22 = water, 23 = lava) ----
+// Like ores, they LOOK like stone until you dig them open.
+// Water pockets sit mid-depth; lava lurks near bedrock.
+function carvePocket(cc, cr, liquid, seed) {
+  const rx = 1 + hash(seed) % 2;           // 1-2 wide radius
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -rx; dc <= rx; dc++) {
+      const r = cr + dr, c = cc + dc;
+      if (r < STONE_TOP || r >= ROWS - 1 || c < 1 || c >= COLS - 1) continue;
+      if (Math.abs(dc) + Math.abs(dr) * 2 > rx + 1) continue; // rough oval
+      const t = grid[r][c];
+      if (t === 3 || t === 9 || t === 10 || t === 11) grid[r][c] = liquid;
+    }
+  }
+}
+for (let cc = 4; cc < COLS - 4; cc += 9 + hash(cc * 613) % 8) {
+  if (hash(cc * 337) % 3 === 0) { // water pocket, depth 8-28
+    carvePocket(cc, STONE_TOP + 8 + hash(cc * 41) % 21, 22, cc * 7);
+  }
+  if (hash(cc * 991) % 3 === 0) { // lava pocket, depth 32-48
+    carvePocket(cc + 3, STONE_TOP + 32 + hash(cc * 53) % 17, 23, cc * 11);
+  }
+}
+let lastTree = -99;
+for (let c = 2; c < COLS - 2; c++) {
+  if (Math.abs(c - COLS / 2) <= 2) continue;      // keep spawn clear
+  if (c - lastTree < 5) continue;                 // space trees out
+  if (hash(c * 7919) % 4 !== 0) continue;
+  lastTree = c;
+  const trunkH = 3 + hash(c * 31) % 3;            // 3–5 tall
+  for (let i = 1; i <= trunkH; i++) grid[GROUND_ROW - i][c] = 5;
+  const topR = GROUND_ROW - trunkH;
+  for (let lr = topR - 2; lr <= topR - 1; lr++) { // 3-wide canopy, 2 rows
+    for (let lc = c - 1; lc <= c + 1; lc++) {
+      if (lr >= 0 && lc >= 0 && lc < COLS && grid[lr][lc] === 0) grid[lr][lc] = 6;
+    }
+  }
+  if (topR - 3 >= 0) grid[topR - 3][c] = 6;       // little tip
 }
 
 function tileAt(c, r) {
   if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return 0;
   return grid[r][c];
 }
-function solid(c, r) { return tileAt(c, r) !== 0; }
+// Liquids (22 water, 23 lava) are not solid — you sink into them
+function isLiquid(t) { return t === 22 || t === 23; }
+function solid(c, r) { const t = tileAt(c, r); return t !== 0 && !isLiquid(t); }
+
+// A tile is "exposed" if any of its 4 neighbors is air (inside the world)
+function isExposed(c, r) {
+  return (c > 0 && grid[r][c - 1] === 0) ||
+         (c < COLS - 1 && grid[r][c + 1] === 0) ||
+         (r > 0 && grid[r - 1][c] === 0) ||
+         (r < ROWS - 1 && grid[r + 1][c] === 0);
+}
 
 // ---- Physics ----
 const GRAVITY = 0.22;
 const MOVE_SPEED = 1.4;
 const JUMP_POWER = 4.2;
+
+// ---- Block hardness (frames of holding E to break, at ~60fps) ----
+const HARDNESS = {
+  1: 25,   // grass
+  2: 20,   // dirt
+  3: 60,   // stone
+  5: 40,   // wood
+  6: 10,   // leaves — almost instant
+  7: 40,   // planks
+  8: 70,   // bricks
+  9: 65,   // coal ore
+  10: 75,  // iron ore
+  11: 90,  // diamond ore — earn it
+  24: 20   // TNT — handle gently
+};
 
 // ---- Palette ----
 const PAL = {
@@ -188,6 +725,18 @@ const PAL = {
   cloud: '#e8f6ff',
   grass: '#5cba4a', grassHi: '#8fdd6e',
   dirt: '#7a4a2b', dirtDk: '#5c3620',
+  stone: '#8a8f98', stoneDk: '#6b7078',
+  bedrock: '#3a3d44', bedrockDk: '#26282e',
+  wood: '#a3703d', woodDk: '#7a4f26',
+  leaf: '#3e9c3e', leafDk: '#2e7a2e',
+  plank: '#c9985c', plankDk: '#9c7040',
+  brick: '#b5563e', brickDk: '#8a3d2c', mortar: '#d9c9b8',
+  coal: '#2b2b32', iron: '#d8a878', diamond: '#5ae8e0',
+  torchStick: '#8a5a2e', torchFlame: '#ffb830', torchCore: '#fff0a0',
+  water: '#2a6ed8', waterHi: '#4a9ae8',
+  lava: '#d84a1e', lavaHi: '#ffb830',
+  cave: '#151020',
+  heart: '#e83a4a', heartDk: '#8a1f2c', heartEmpty: 'rgba(20,10,20,.4)',
   white: '#ffffff', ink: '#20142a',
   panel: 'rgba(32,20,42,.65)',
   slot: 'rgba(255,255,255,.15)',
@@ -198,37 +747,300 @@ const PAL = {
 
 const SKINS = [
   ['#f05a3c', '#b23a24'], ['#4a90e8', '#2c5ba8'], ['#a05ae8', '#6e35a8'],
-  ['#e8c84a', '#a8892c'], ['#4ae8b4', '#2ca87e'], ['#e84a90', '#a82c5f']
+  ['#e8c84a', '#a8892c'], ['#4ae8b4', '#2ca87e'], ['#e84a90', '#a82c5f'],
+  ['#6ee86e', '#3aa83a'], ['#e8e8e8', '#9a9aa8']
 ];
 
+// ---- Hats (drawn above the sprite's head) ----
+const HATS = ['NONE', 'CAP', 'TOPHAT', 'CROWN', 'BEANIE', 'HORNS'];
+function drawHat(x, y, f, hat) {
+  if (hat === 1) { // cap — red with a forward brim
+    px(x + 2, y - 2, 8, 2, '#d8452e');
+    px(f === 1 ? x + 8 : x + 1, y - 1, 3, 1, '#a83322');
+  } else if (hat === 2) { // top hat
+    px(x + 1, y - 1, 10, 1, '#23232b');
+    px(x + 3, y - 5, 6, 4, '#23232b');
+    px(x + 3, y - 2, 6, 1, '#8a2434');
+  } else if (hat === 3) { // crown
+    px(x + 2, y - 2, 8, 2, '#e8c84a');
+    px(x + 2, y - 3, 2, 1, '#e8c84a');
+    px(x + 5, y - 4, 2, 2, '#e8c84a');
+    px(x + 8, y - 3, 2, 1, '#e8c84a');
+    px(x + 5, y - 3, 2, 1, '#5ae8e0');
+  } else if (hat === 4) { // beanie with pompom
+    px(x + 2, y - 2, 8, 2, '#2ca87e');
+    px(x + 5, y - 4, 2, 2, '#ffffff');
+  } else if (hat === 5) { // horns
+    px(x + 1, y - 3, 2, 3, '#8a2434');
+    px(x + 9, y - 3, 2, 3, '#8a2434');
+    px(x + 1, y - 4, 1, 1, '#d8452e');
+    px(x + 10, y - 4, 1, 1, '#d8452e');
+  }
+}
+
 // ---- Hotbar ----
-const SLOTS = [
-  { type: 1, name: 'grass', count: 0 },
-  { type: 2, name: 'dirt',  count: 0 }
-];
+// ---- Items: Minecraft-style hotbar + inventory ----
+// Every slot is null or { type, count } (stacks up to 99).
+// The hotbar starts EMPTY — mining fills it.
+const HOTBAR_SIZE = 7;
+const INV_SIZE = 14; // 2 rows of 7 in the inventory screen
+const hotbar = new Array(HOTBAR_SIZE).fill(null);
+const invGrid = new Array(INV_SIZE).fill(null);
 let selectedSlot = 0;
-function slotForType(t) { return SLOTS.find(s => s.type === t); }
+let invOpen = false;     // the C screen
+let grabbed = null;      // { area: 'hot'|'inv', i } — item picked up for moving
+const MAX_STACK = 99;
+
+function countOf(type) {
+  let n = 0;
+  for (const s of hotbar) if (s && s.type === type) n += s.count;
+  for (const s of invGrid) if (s && s.type === type) n += s.count;
+  return n;
+}
+
+// Add items: stack onto existing (hotbar first), then first empty slot.
+function addItem(type, n = 1) {
+  const arrays = [hotbar, invGrid];
+  for (const arr of arrays) {          // top up existing stacks
+    for (const s of arr) {
+      if (n <= 0) return;
+      if (s && s.type === type && s.count < MAX_STACK) {
+        const mv = Math.min(MAX_STACK - s.count, n);
+        s.count += mv; n -= mv;
+      }
+    }
+  }
+  for (const arr of arrays) {          // then empty slots
+    for (let i = 0; i < arr.length; i++) {
+      if (n <= 0) return;
+      if (!arr[i]) {
+        const mv = Math.min(MAX_STACK, n);
+        arr[i] = { type, count: mv }; n -= mv;
+      }
+    }
+  }
+  // if everything is full, the leftovers are lost (rare)
+}
+
+// Remove n items of a type (inventory first, hotbar last)
+function removeItems(type, n) {
+  const arrays = [invGrid, hotbar];
+  for (const arr of arrays) {
+    for (let i = 0; i < arr.length; i++) {
+      if (n <= 0) return;
+      const s = arr[i];
+      if (s && s.type === type) {
+        const mv = Math.min(s.count, n);
+        s.count -= mv; n -= mv;
+        if (s.count <= 0) arr[i] = null;
+      }
+    }
+  }
+}
+
+// ---- Crafting ----
+// ins: [ [blockType, amount], ... ]  out: [blockType, amount]
+const RECIPES = [
+  { ins: [[5, 1]],          out: [7, 4],  label: 'PLANKS' },
+  { ins: [[3, 4]],          out: [8, 2],  label: 'BRICKS' },
+  { ins: [[2, 2], [6, 2]],  out: [1, 2],  label: 'GRASS'  },
+  { ins: [[9, 1], [5, 1]],  out: [12, 4], label: 'TORCH'  },
+  // stone tools
+  { ins: [[5, 2], [3, 3]],  out: [13, 1], label: 'PICK'   },
+  { ins: [[5, 3], [3, 2]],  out: [14, 1], label: 'AXE'    },
+  { ins: [[5, 2], [3, 1]],  out: [15, 1], label: 'SHOVEL' },
+  // iron tools (2x faster)
+  { ins: [[5, 2], [10, 3]], out: [16, 1], label: 'PICK'   },
+  { ins: [[5, 3], [10, 2]], out: [17, 1], label: 'AXE'    },
+  { ins: [[5, 2], [10, 1]], out: [18, 1], label: 'SHOVEL' },
+  // diamond tools (2x faster again)
+  { ins: [[5, 2], [11, 3]], out: [19, 1], label: 'PICK'   },
+  { ins: [[5, 3], [11, 2]], out: [20, 1], label: 'AXE'    },
+  { ins: [[5, 2], [11, 1]], out: [21, 1], label: 'SHOVEL' },
+  // explosives
+  { ins: [[9, 4], [2, 2]],  out: [24, 1], label: 'TNT'    },
+  { ins: [[10, 1], [3, 1]], out: [25, 1], label: 'FLINT'  }
+];
+
+// ---- Tools ----
+// 13-15 stone (pick/axe/shovel), 16-18 iron, 19-21 diamond.
+// Right tool = fast (each tier 2x faster). Wrong tool = slower than hands.
+const TOOL_MIN = 13, TOOL_MAX = 21;
+function isTool(t) { return t >= TOOL_MIN && t <= TOOL_MAX; }
+function toolKind(t) { return (t - TOOL_MIN) % 3; }        // 0 pick, 1 axe, 2 shovel
+function toolTier(t) { return Math.floor((t - TOOL_MIN) / 3); } // 0 stone, 1 iron, 2 diamond
+const KIND_FAST = [
+  [3, 8, 9, 10, 11],  // pickaxe: stone, bricks, ores
+  [5, 7, 6],          // axe: wood, planks, leaves
+  [1, 2]              // shovel: grass, dirt
+];
+const TIER_MULT = [0.35, 0.175, 0.0875]; // stone → iron (2x) → diamond (4x)
+const TOOL_SLOW_MULT = 1.6;              // wrong tool: slower than hands
+
+// ---- TNT (24) & flint and steel (25) ----
+// Place TNT like a block. Hold flint & steel and press E on TNT to light it.
+const TNT_FUSE = 70;        // frames until boom
+const TNT_RADIUS2 = 10;     // squared blast radius (~3 tiles)
+const litTNT = [];          // { r, c, timer, by }
+const litSet = new Set();
+
+function igniteTNT(r, c, by) {
+  const key = r + '_' + c;
+  if (litSet.has(key) || grid[r] === undefined || grid[r][c] !== 24) return;
+  litSet.add(key);
+  litTNT.push({ r, c, timer: TNT_FUSE, by });
+}
+
+function explodeTNT(r, c, by) {
+  litSet.delete(r + '_' + c);
+  const mine = by === myId;
+  for (let dr = -3; dr <= 3; dr++) {
+    for (let dc = -3; dc <= 3; dc++) {
+      if (dr * dr + dc * dc > TNT_RADIUS2) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      const t = grid[nr][nc];
+      if (t === 0 || t === 4) continue;        // air and bedrock survive
+      if (t === 24 && !litSet.has(nr + '_' + nc) && !(nr === r && nc === c)) {
+        igniteTNT(nr, nc, by);                 // chain reaction (deterministic)
+        continue;
+      }
+      grid[nr][nc] = 0;
+      if (mine) netSetBlock(nr, nc, 0);
+      const key = torchKey(nr, nc);
+      if (torches.has(key)) { torches.delete(key); if (mine) netSetTorch(nr, nc, 0); }
+    }
+  }
+  lightDirty = true;
+  // boom particles
+  for (let i = 0; i < 24; i++) {
+    particles.push({
+      x: c * TILE + 6, y: r * TILE + 6,
+      vx: (Math.random() - 0.5) * 4, vy: -Math.random() * 3,
+      life: 20 + Math.random() * 20,
+      color: i % 3 === 0 ? PAL.lavaHi : i % 3 === 1 ? PAL.lava : PAL.stoneDk
+    });
+  }
+  // blast damage to YOUR player by distance (each client handles its own)
+  const px0 = c * TILE + 6, py0 = r * TILE + 6;
+  const dx = (player.x + player.w / 2 - px0) / TILE;
+  const dy = (player.y + player.h / 2 - py0) / TILE;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const dmg = Math.max(0, Math.round(10 - dist * 2.5));
+  if (dmg > 0 && !player.dead) takeDamage(player, dmg);
+}
+
+function updateTNT() {
+  for (let i = litTNT.length - 1; i >= 0; i--) {
+    const t = litTNT[i];
+    t.timer--;
+    if (t.timer % 12 === 0) {
+      particles.push({
+        x: t.c * TILE + 5 + Math.random() * 3, y: t.r * TILE - 1,
+        vx: (Math.random() - 0.5) * 0.5, vy: -0.6,
+        life: 10, color: PAL.torchFlame
+      });
+    }
+    if (t.timer <= 0) {
+      litTNT.splice(i, 1);
+      explodeTNT(t.r, t.c, t.by);
+    }
+  }
+}
+// Wall recipes: 1 block → 1 background wall (type + 100), for every buildable block
+for (const t of [1, 2, 3, 5, 6, 7, 8]) {
+  RECIPES.push({ ins: [[t, 1]], out: [t + 100, 1], label: 'WALL' });
+}
+
+function canCraft(recipe) {
+  return recipe.ins.every(([t, n]) => countOf(t) >= n);
+}
+function tryCraft(i) {
+  const r = RECIPES[i];
+  if (!r || !canCraft(r)) return;
+  for (const [t, n] of r.ins) removeItems(t, n);
+  addItem(r.out[0], r.out[1]);
+}
+
+// Tap logic inside the inventory screen: pick up, then place/swap/merge
+function menuSlotTap(area, i) {
+  const arr = area === 'hot' ? hotbar : invGrid;
+  if (!grabbed) {
+    if (arr[i]) grabbed = { area, i };
+    return;
+  }
+  const src = grabbed.area === 'hot' ? hotbar : invGrid;
+  if (grabbed.area === area && grabbed.i === i) { grabbed = null; return; }
+  const a = src[grabbed.i], b = arr[i];
+  if (a && b && a.type === b.type) {
+    // merge stacks
+    const mv = Math.min(MAX_STACK - b.count, a.count);
+    b.count += mv; a.count -= mv;
+    if (a.count <= 0) src[grabbed.i] = null;
+  } else {
+    // move / swap
+    src[grabbed.i] = b;
+    arr[i] = a;
+  }
+  grabbed = null;
+}
 
 // ---- Local player ----
 const myId = 'p' + Math.random().toString(36).slice(2, 9);
-function skinFor(id) {
+function skinIndexFor(id) {
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return SKINS[h % SKINS.length];
+  return h % SKINS.length;
 }
-const mySkin = skinFor(myId);
+function skinFor(id) { return SKINS[skinIndexFor(id)]; }
+let mySkinIndex = skinIndexFor(myId); // default from id; overridden by picker
+let myHat = 0;
+function mySkin() { return SKINS[mySkinIndex]; }
 
 const player = {
-  x: W / 2 - 5,
-  y: (ROWS - 3) * TILE - 14,
+  x: WORLD_W / 2 - 5,
+  y: GROUND_ROW * TILE - 14,
   w: 10, h: 14,
   vx: 0, vy: 0,
   onGround: false, facing: 1,
   walkFrame: 0, walkTimer: 0,
-  spawnX: W / 2 - 5,
+  spawnX: WORLD_W / 2 - 5,
   mineHeld: false,
-  placeHeld: false
+  mineTarget: null,   // { r, c } currently being mined
+  mineProgress: 0,    // 0..1
+  placeHeld: false,
+  // Health: 10 HP = 5 hearts (half-hearts possible)
+  hp: 10,
+  maxHp: 10,
+  fallY: GROUND_ROW * TILE - 14, // highest point of the current fall
+  hurtFlash: 0,                  // frames of red screen flash
+  regenTimer: 0,
+  dead: false,
+  deathTimer: 0
 };
+
+const SAFE_FALL_TILES = 4; // falls up to 4 blocks are free
+
+function respawn(p) {
+  p.x = p.spawnX;
+  p.y = GROUND_ROW * TILE - 14;
+  p.vx = 0; p.vy = 0;
+  p.hp = p.maxHp;
+  p.fallY = p.y;
+  p.onGround = false;
+}
+
+function takeDamage(p, dmg) {
+  if (dmg <= 0) return;
+  p.hp -= dmg;
+  p.hurtFlash = 12;
+  p.regenTimer = 0;
+  if (p.hp <= 0) {
+    p.hp = 0;
+    p.dead = true;
+    p.deathTimer = 0;
+  }
+}
 
 // ---- Remote players: id -> {x,y,tx,ty,facing,moving,skin,walkFrame,walkTimer} ----
 const remotes = new Map();
@@ -247,17 +1059,21 @@ if (firebaseConfig) {
     net.db = firebase.database();
     net.enabled = true;
 
-    const myRef = net.db.ref('players/' + myId);
+    const myRef = net.db.ref('v3/players/' + myId);
     myRef.onDisconnect().remove(); // vanish cleanly when tab closes
 
     // Send my position ~7 times per second (only when something changed)
     let lastSent = '';
     setInterval(() => {
+      if (!gameStarted) return;
       const state = {
         x: Math.round(player.x),
         y: Math.round(player.y),
         f: player.facing,
-        m: player.vx !== 0
+        m: player.vx !== 0,
+        n: myName,
+        s: mySkinIndex,
+        h: myHat
       };
       const s = JSON.stringify(state);
       if (s !== lastSent) {
@@ -267,31 +1083,68 @@ if (firebaseConfig) {
     }, 140);
 
     // Receive other players
-    const playersRef = net.db.ref('players');
+    const playersRef = net.db.ref('v3/players');
     playersRef.on('child_added',   snap => upsertRemote(snap.key, snap.val()));
     playersRef.on('child_changed', snap => upsertRemote(snap.key, snap.val()));
     playersRef.on('child_removed', snap => remotes.delete(snap.key));
 
     function upsertRemote(id, d) {
       if (id === myId || !d) return;
+      const skin = SKINS[d.s] || skinFor(id);
+      const hat = HATS[d.h] ? d.h : 0;
       let rp = remotes.get(id);
       if (!rp) {
         rp = { x: d.x, y: d.y, tx: d.x, ty: d.y, facing: d.f, moving: d.m,
-               skin: skinFor(id), walkFrame: 0, walkTimer: 0 };
+               name: sanitizeName(d.n), skin, hat, walkFrame: 0, walkTimer: 0 };
         remotes.set(id, rp);
       } else {
         rp.tx = d.x; rp.ty = d.y; rp.facing = d.f; rp.moving = d.m;
+        rp.name = sanitizeName(d.n);
+        rp.skin = skin; rp.hat = hat;
       }
     }
 
     // World sync: every block edit is one tiny write, received live
-    const worldRef = net.db.ref('world');
+    const worldRef = net.db.ref('v3/world');
     function applyBlock(key, t) {
       const [r, c] = key.split('_').map(Number);
-      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) grid[r][c] = t || 0;
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) { grid[r][c] = t || 0; lightDirty = true; }
     }
     worldRef.on('child_added',   snap => applyBlock(snap.key, snap.val()));
     worldRef.on('child_changed', snap => applyBlock(snap.key, snap.val()));
+
+    // Torch sync
+    const torchRef = net.db.ref('v3/torch');
+    function applyTorch(key, v) {
+      if (v) torches.add(key); else torches.delete(key);
+      lightDirty = true;
+    }
+    torchRef.on('child_added',   snap => applyTorch(snap.key, snap.val()));
+    torchRef.on('child_changed', snap => applyTorch(snap.key, snap.val()));
+
+    // Background wall layer sync
+    const bgRef = net.db.ref('v3/bg');
+    function applyBg(key, t) {
+      const [r, c] = key.split('_').map(Number);
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) bgGrid[r][c] = t || 0;
+    }
+    bgRef.on('child_added',   snap => applyBg(snap.key, snap.val()));
+    bgRef.on('child_changed', snap => applyBg(snap.key, snap.val()));
+
+    // Chat feed (last few messages; old ones fade out client-side)
+    net.db.ref('v3/chat').limitToLast(10).on('child_added', snap => {
+      const d = snap.val();
+      if (!d || typeof d.t !== 'string') return;
+      pushChat({ id: d.id || '', name: sanitizeName(d.n), text: sanitizeChat(d.t), ts: d.ts || 0 });
+    });
+
+    // TNT ignitions from other players (ignore stale events on join)
+    net.db.ref('v3/tnt').limitToLast(5).on('child_added', snap => {
+      const d = snap.val();
+      if (!d || d.by === myId) return;
+      if (Date.now() - (d.ts || 0) > 8000) return;
+      igniteTNT(d.r, d.c, d.by);
+    });
   } catch (e) {
     console.error('Firebase init failed:', e);
     net.enabled = false;
@@ -304,18 +1157,34 @@ if (!net.enabled) {
 
 function netSetBlock(r, c, t) {
   if (!net.enabled) return;
-  net.db.ref('world/' + r + '_' + c).set(t);
+  net.db.ref('v3/world/' + r + '_' + c).set(t);
+}
+function netSetBg(r, c, t) {
+  if (!net.enabled) return;
+  net.db.ref('v3/bg/' + r + '_' + c).set(t);
+}
+function netSetTorch(r, c, v) {
+  if (!net.enabled) return;
+  net.db.ref('v3/torch/' + r + '_' + c).set(v);
 }
 
 // ---- Input ----
 const keys = {};
 addEventListener('keydown', e => {
+  if (!gameStarted || chatOpen) return; // name screen or chat is up
+  if (e.code === 'KeyT' && !invOpen) { e.preventDefault(); openChat(); return; }
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
-  const m = e.code.match(/^Digit([1-9])$/);
+  if (e.code === 'KeyC' && !e.repeat) { invOpen = !invOpen; grabbed = null; }
+  const m = e.code.match(/^Digit([0-9])$/);
   if (m) {
-    const i = Number(m[1]) - 1;
-    if (i < SLOTS.length) selectedSlot = i;
+    const d = Number(m[1]);
+    if (invOpen) {
+      const i = d === 0 ? 9 : d - 1;
+      if (i < RECIPES.length) tryCraft(i);
+    } else if (d >= 1 && d - 1 < HOTBAR_SIZE) {
+      selectedSlot = d - 1;
+    }
   }
 });
 addEventListener('keyup', e => keys[e.code] = false);
@@ -324,6 +1193,7 @@ addEventListener('keyup', e => keys[e.code] = false);
 // Each button presses/releases the same virtual key the keyboard uses.
 for (const btn of document.querySelectorAll('.tc-btn')) {
   const code = btn.dataset.key;
+  if (!code) continue; // buttons with special handling (e.g. CRAFT)
   const press = e => { e.preventDefault(); keys[code] = true; btn.classList.add('held'); };
   const release = e => { e.preventDefault(); keys[code] = false; btn.classList.remove('held'); };
   btn.addEventListener('touchstart', press, { passive: false });
@@ -335,16 +1205,59 @@ for (const btn of document.querySelectorAll('.tc-btn')) {
   btn.addEventListener('mouseleave', release);
 }
 
-// Tap the hotbar on the canvas to pick a slot
-function canvasTapToSlot(clientX, clientY) {
+// INV button toggles the inventory screen
+const craftBtn = document.getElementById('btn-craft');
+const toggleCraft = e => { e.preventDefault(); invOpen = !invOpen; grabbed = null; };
+craftBtn.addEventListener('touchstart', toggleCraft, { passive: false });
+craftBtn.addEventListener('mousedown', toggleCraft);
+
+// CHAT button opens/closes the chat input
+const chatBtn = document.getElementById('btn-chat');
+const toggleChat = e => { e.preventDefault(); chatOpen ? closeChat() : openChat(); };
+chatBtn.addEventListener('touchstart', toggleChat, { passive: false });
+chatBtn.addEventListener('mousedown', toggleChat);
+
+// Hit areas for the crafting menu (filled in by drawCraftMenu each frame)
+let craftRowRects = [];
+let craftPanelRect = null;
+
+function canvasTap(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
   const gx = (clientX - rect.left) * (W / rect.width);
   const gy = (clientY - rect.top) * (H / rect.height);
-  const slotW = 26, slotH = 17, pad = 2;
-  for (let i = 0; i < SLOTS.length; i++) {
+
+  if (player.dead) { wantRespawnTap = true; return; }
+
+  if (invOpen) {
+    // craft rows
+    for (let i = 0; i < craftRowRects.length; i++) {
+      const rr = craftRowRects[i];
+      if (gx >= rr.x && gx <= rr.x + rr.w && gy >= rr.y && gy <= rr.y + rr.h) {
+        tryCraft(i);
+        return;
+      }
+    }
+    // item slots (inventory grid + hotbar row)
+    for (const sr of menuSlotRects) {
+      if (gx >= sr.x && gx <= sr.x + sr.w && gy >= sr.y && gy <= sr.y + sr.h) {
+        menuSlotTap(sr.area, sr.i);
+        return;
+      }
+    }
+    // tapped outside the panel → close
+    const pr = craftPanelRect;
+    if (pr && (gx < pr.x || gx > pr.x + pr.w || gy < pr.y || gy > pr.y + pr.h)) {
+      invOpen = false;
+      grabbed = null;
+    }
+    return;
+  }
+
+  // otherwise: hotbar slot picking (in-game)
+  const slotW = 20, slotH = 20, pad = 2;
+  for (let i = 0; i < HOTBAR_SIZE; i++) {
     const sx = 2 + pad + i * (slotW + pad);
     const sy = 2 + pad;
-    // generous touch target around each slot
     if (gx >= sx - 2 && gx <= sx + slotW + 2 && gy >= sy - 2 && gy <= sy + slotH + 4) {
       selectedSlot = i;
       return;
@@ -353,9 +1266,9 @@ function canvasTapToSlot(clientX, clientY) {
 }
 canvas.addEventListener('touchstart', e => {
   const t = e.touches[0];
-  if (t) canvasTapToSlot(t.clientX, t.clientY);
+  if (t) canvasTap(t.clientX, t.clientY);
 }, { passive: true });
-canvas.addEventListener('mousedown', e => canvasTapToSlot(e.clientX, e.clientY));
+canvas.addEventListener('mousedown', e => canvasTap(e.clientX, e.clientY));
 
 // ---- Particles ----
 const particles = [];
@@ -387,7 +1300,7 @@ function moveAndCollide(p) {
     }
   }
   if (p.x < 0) p.x = 0;
-  if (p.x + p.w > W) p.x = W - p.w;
+  if (p.x + p.w > WORLD_W) p.x = WORLD_W - p.w;
 
   p.y += p.vy;
   p.onGround = false;
@@ -413,63 +1326,262 @@ function moveAndCollide(p) {
   }
 }
 
+// Mining time multiplier from the currently held item
+function miningMult(blockType) {
+  const held = hotbar[selectedSlot];
+  if (!held || !isTool(held.type)) return 1;
+  return KIND_FAST[toolKind(held.type)].includes(blockType)
+    ? TIER_MULT[toolTier(held.type)]
+    : TOOL_SLOW_MULT;
+}
+
 // ---- Update ----
 function update() {
   const p = player;
 
-  p.vx = 0;
-  if (keys['KeyA']) { p.vx = -MOVE_SPEED; p.facing = -1; }
-  if (keys['KeyD']) { p.vx =  MOVE_SPEED; p.facing =  1; }
+  // ---- Death screen state ----
+  if (p.dead) {
+    p.deathTimer++;
+    // small delay so a held Space doesn't skip the screen instantly
+    if (p.deathTimer > 45 && (keys['Space'] || wantRespawnTap)) {
+      wantRespawnTap = false;
+      respawn(p);
+      p.dead = false;
+    }
+    updateRemotesAndCamera(p);
+    return;
+  }
+  wantRespawnTap = false;
 
-  if (keys['Space'] && p.onGround) p.vy = -JUMP_POWER;
+  if (adminNoclip) {
+    // ---- NOCLIP FLIGHT: WASD/Space to fly, straight through blocks ----
+    const s = MOVE_SPEED * 2 * adminSpeed;
+    p.vx = ((keys['KeyD'] ? 1 : 0) - (keys['KeyA'] ? 1 : 0)) * s;
+    if (keys['KeyD']) p.facing = 1;
+    if (keys['KeyA']) p.facing = -1;
+    const vy = ((keys['KeyS'] ? 1 : 0) - ((keys['KeyW'] || keys['Space']) ? 1 : 0)) * s;
+    p.x += p.vx;
+    p.y += vy;
+    if (p.x < 0) p.x = 0;
+    if (p.x + p.w > WORLD_W) p.x = WORLD_W - p.w;
+    if (p.y < 0) p.y = 0;
+    if (p.y + p.h > WORLD_H) p.y = WORLD_H - p.h;
+    p.vy = 0;
+    p.onGround = true;      // Q tower-placing keeps working
+    p.fallY = p.y;          // no fall damage on landing out of flight
+  } else {
+    // Which liquid (if any) is the body in?
+    const bcc = Math.floor((p.x + p.w / 2) / TILE);
+    let liquid = 0;
+    for (const br of [Math.floor(p.y / TILE), Math.floor((p.y + p.h - 1) / TILE)]) {
+      const bt = tileAt(bcc, br);
+      if (isLiquid(bt)) { liquid = bt; break; }
+    }
+    const speedMul = liquid === 22 ? 0.55 : liquid === 23 ? 0.35 : 1;
 
-  p.vy += GRAVITY;
-  if (p.vy > 5) p.vy = 5;
+    p.vx = 0;
+    if (keys['KeyA']) { p.vx = -MOVE_SPEED * adminSpeed * speedMul; p.facing = -1; }
+    if (keys['KeyD']) { p.vx =  MOVE_SPEED * adminSpeed * speedMul; p.facing =  1; }
 
-  moveAndCollide(p);
+    if (liquid) {
+      // Swim: Space paddles upward; gravity is gentle; sinking is slow
+      if (keys['Space']) p.vy = liquid === 22 ? -1.3 : -0.8;
+      else p.vy += GRAVITY * 0.25;
+      const cap = liquid === 22 ? 1.1 : 0.7;
+      if (p.vy > cap) p.vy = cap;
+      p.fallY = p.y; // liquids break your fall — no fall damage
+      // Lava BURNS
+      if (liquid === 23) {
+        p.lavaTimer = (p.lavaTimer || 0) + 1;
+        if (p.lavaTimer % 15 === 0) takeDamage(p, 1);
+      } else {
+        p.lavaTimer = 0;
+      }
+    } else {
+      p.lavaTimer = 0;
+      if (keys['Space'] && p.onGround) p.vy = -JUMP_POWER;
+      p.vy += GRAVITY;
+      if (p.vy > 5) p.vy = 5;
+    }
+
+    const wasOnGround = p.onGround;
+    moveAndCollide(p);
+
+    // ---- Fall damage ----
+    // Landed after a fall? (must check BEFORE updating fallY!)
+    if (p.onGround && !wasOnGround) {
+      const fallTiles = (p.y - p.fallY) / TILE;
+      const dmg = Math.max(0, Math.round(fallTiles) - SAFE_FALL_TILES);
+      takeDamage(p, dmg);
+    }
+    // Track the start/apex of the current fall
+    if (p.onGround || p.y < p.fallY) p.fallY = p.y;
+  }
+
+  // Slow regeneration: half a heart every ~4 seconds if not recently hurt
+  if (p.hp < p.maxHp) {
+    p.regenTimer++;
+    if (p.regenTimer > 240) {
+      p.regenTimer = 0;
+      p.hp = Math.min(p.maxHp, p.hp + 1);
+    }
+  }
+  if (p.hurtFlash > 0) p.hurtFlash--;
 
   const c = Math.floor((p.x + p.w / 2) / TILE);
 
-  // E: mine block under feet
+  // Particle color per block type
+  const blockColor = t =>
+    t === 1 ? PAL.grass : t === 2 ? PAL.dirt : t === 3 ? PAL.stone :
+    t === 5 ? PAL.wood : t === 6 ? PAL.leaf :
+    t === 7 ? PAL.plank : t === 8 ? PAL.brick :
+    t === 9 ? PAL.coal : t === 10 ? PAL.iron : t === 11 ? PAL.diamond :
+    t === 24 ? '#c93a2a' :
+    PAL.bedrock;
+
+  // E: HOLD to mine — blocks take time based on hardness.
+  // Target priority: front-low → front-high → below.
   const mineDown = keys['KeyE'];
-  if (mineDown && !p.mineHeld) {
-    const r = Math.floor((p.y + p.h) / TILE);
-    if (solid(c, r)) {
-      const t = grid[r][c];
-      grid[r][c] = 0;
-      const slot = slotForType(t);
-      if (slot) slot.count++;
-      spawnParticles(c, r, t === 1 ? PAL.grass : PAL.dirt);
-      netSetBlock(r, c, 0);
+  const rFeet = Math.floor((p.y + p.h - 1) / TILE); // lower body row
+  const rHead = Math.floor(p.y / TILE);             // upper body row
+  const cFront = c + p.facing;
+  if (mineDown) {
+    const targets = [
+      [rFeet, cFront],
+      [rHead, cFront],
+      [Math.floor((p.y + p.h) / TILE), c]
+    ];
+    let target = null;
+    for (const [r, tc] of targets) {
+      if (solid(tc, r)) { target = { r, c: tc }; break; }
     }
+
+    if (target) {
+      const t = grid[target.r][target.c];
+      const heldNow = hotbar[selectedSlot];
+      if (t === 24 && heldNow && heldNow.type === 25) {
+        // Flint & steel on TNT: LIGHT IT (edge-triggered)
+        if (!p.mineHeld) {
+          igniteTNT(target.r, target.c, myId);
+          if (net.enabled) {
+            try { net.db.ref('v3/tnt').push({ r: target.r, c: target.c, by: myId, ts: Date.now() }); }
+            catch (e) {}
+          }
+        }
+        p.mineTarget = null; p.mineProgress = 0;
+      } else if (t === 4) {
+        // Bedrock: unbreakable — occasional sparks, no progress
+        p.mineTarget = null; p.mineProgress = 0;
+        if (frameCount % 20 === 0) spawnParticles(target.c, target.r, PAL.stoneDk);
+      } else {
+        // New target? Start over.
+        if (!p.mineTarget || p.mineTarget.r !== target.r || p.mineTarget.c !== target.c) {
+          p.mineTarget = target;
+          p.mineProgress = 0;
+        }
+        p.mineProgress += 1 / (HARDNESS[t] || 40) / miningMult(t);
+        // chip particles while working
+        if (frameCount % 9 === 0) spawnParticles(target.c, target.r, blockColor(t));
+        if (p.mineProgress >= 1) {
+          grid[target.r][target.c] = 0;
+          addItem(t, 1);
+          spawnParticles(target.c, target.r, blockColor(t));
+          netSetBlock(target.r, target.c, 0);
+          lightDirty = true;
+          p.mineTarget = null;
+          p.mineProgress = 0;
+        }
+      }
+    } else {
+      p.mineTarget = null; p.mineProgress = 0;
+      // Nothing solid in reach: torches and walls come off instantly (on press)
+      if (!p.mineHeld) {
+        let took = false;
+        const spotTargets = [[rFeet, c], [rHead, c], [rFeet, cFront], [rHead, cFront]];
+        for (const [r, tc] of spotTargets) {
+          const key = torchKey(r, tc);
+          if (!torches.has(key)) continue;
+          torches.delete(key);
+          addItem(12, 1);
+          lightDirty = true;
+          spawnParticles(tc, r, PAL.torchFlame);
+          netSetTorch(r, tc, 0);
+          took = true;
+          break;
+        }
+        if (!took) {
+          for (const [r, tc] of spotTargets) {
+            if (tc < 0 || tc >= COLS || r < 0 || r >= ROWS) continue;
+            const bt = bgGrid[r][tc];
+            if (!bt) continue;
+            bgGrid[r][tc] = 0;
+            addItem(bt + 100, 1);
+            spawnParticles(tc, r, blockColor(bt));
+            netSetBg(r, tc, 0);
+            break;
+          }
+        }
+      }
+    }
+  } else {
+    p.mineTarget = null;
+    p.mineProgress = 0;
   }
   p.mineHeld = mineDown;
 
-  // Q: place selected block under you, teleport on top
+  // Q: place selected block
+  //  - wall items (type >= 100) go into the BACKGROUND at your position
+  //  - normal blocks are placed under you (teleporting you on top)
   const placeDown = keys['KeyQ'];
-  const slot = SLOTS[selectedSlot];
-  if (placeDown && !p.placeHeld && slot.count > 0) {
-    const rBelow = Math.floor((p.y + p.h) / TILE);
-    const target = solid(c, rBelow) ? rBelow - 1 : rBelow;
-    if (target >= 0 && !solid(c, target)) {
-      slot.count--;
-      grid[target][c] = slot.type;
-      p.x = c * TILE + (TILE - p.w) / 2;
-      p.y = target * TILE - p.h;
-      p.vy = 0;
-      p.onGround = true;
-      spawnParticles(c, target, slot.type === 1 ? PAL.grassHi : PAL.dirt, true);
-      netSetBlock(target, c, slot.type);
+  const held = hotbar[selectedSlot];
+  if (placeDown && !p.placeHeld && held && held.count > 0) {
+    if (isTool(held.type) || held.type === 25) {
+      // tools and flint & steel aren't placeable
+    } else if (held.type === 12) {
+      // Torch: goes at your position (needs open air, one per tile)
+      const rFeet2 = Math.floor((p.y + p.h - 1) / TILE);
+      const key = torchKey(rFeet2, c);
+      if (rFeet2 >= 0 && rFeet2 < ROWS && !solid(c, rFeet2) && !torches.has(key)) {
+        held.count--;
+        if (held.count <= 0) hotbar[selectedSlot] = null;
+        torches.add(key);
+        lightDirty = true;
+        spawnParticles(c, rFeet2, PAL.torchFlame, true);
+        netSetTorch(rFeet2, c, 1);
+      }
+    } else if (held.type >= 100) {
+      const bt = held.type - 100;
+      const rFeet2 = Math.floor((p.y + p.h - 1) / TILE);
+      if (rFeet2 >= 0 && rFeet2 < ROWS && c >= 0 && c < COLS &&
+          bgGrid[rFeet2][c] === 0 && !solid(c, rFeet2)) {
+        held.count--;
+        if (held.count <= 0) hotbar[selectedSlot] = null;
+        bgGrid[rFeet2][c] = bt;
+        spawnParticles(c, rFeet2, blockColor(bt), true);
+        netSetBg(rFeet2, c, bt);
+      }
+    } else {
+      const rBelow = Math.floor((p.y + p.h) / TILE);
+      const target = solid(c, rBelow) ? rBelow - 1 : rBelow;
+      if (target >= 0 && !solid(c, target)) {
+        const placedType = held.type;
+        held.count--;
+        if (held.count <= 0) hotbar[selectedSlot] = null;
+        grid[target][c] = placedType;
+        p.x = c * TILE + (TILE - p.w) / 2;
+        p.y = target * TILE - p.h;
+        p.vy = 0;
+        p.onGround = true;
+        spawnParticles(c, target, blockColor(placedType), true);
+        netSetBlock(target, c, placedType);
+        lightDirty = true;
+      }
     }
   }
   p.placeHeld = placeDown;
 
-  // Fell out → respawn from the sky
-  if (p.y > H + 20) {
-    p.x = p.spawnX;
-    p.y = -20;
-    p.vy = 0;
-  }
+  // Fell out → respawn (shouldn't happen with bedrock, but safe)
+  if (p.y > WORLD_H + 20) respawn(p);
 
   // Walk animation
   if (p.vx !== 0 && p.onGround) {
@@ -479,6 +1591,12 @@ function update() {
     p.walkFrame = 0;
   }
 
+  updateRemotesAndCamera(p);
+}
+
+// Runs every frame, alive or dead
+let wantRespawnTap = false;
+function updateRemotesAndCamera(p) {
   // Glide remote players toward their latest reported position
   for (const rp of remotes.values()) {
     rp.x += (rp.tx - rp.x) * 0.3;
@@ -490,30 +1608,57 @@ function update() {
       rp.walkFrame = 0;
     }
   }
+
+  // Camera follows the player, clamped so you can't see past the world edge
+  camX = p.x + p.w / 2 - W / 2;
+  if (camX < 0) camX = 0;
+  if (camX > WORLD_W - W) camX = WORLD_W - W;
+  camY = p.y + p.h / 2 - H / 2;
+  if (camY < 0) camY = 0;
+  if (camY > WORLD_H - H) camY = WORLD_H - H;
 }
 
 // ---- Pixel helpers ----
+let curCtx = ctx; // swappable so the title-screen preview can reuse drawSprite
 function px(x, y, w, h, color) {
-  ctx.fillStyle = color;
-  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+  curCtx.fillStyle = color;
+  curCtx.fillRect(Math.round(x), Math.round(y), w, h);
 }
 
-const DIGITS = {
+// 3x5 pixel font (digits + full alphabet)
+const FONT = {
   '0': [7,5,5,5,7], '1': [2,6,2,2,7], '2': [7,1,7,4,7], '3': [7,1,7,1,7],
   '4': [5,5,7,1,1], '5': [7,4,7,1,7], '6': [7,4,7,5,7], '7': [7,1,1,1,1],
-  '8': [7,5,7,5,7], '9': [7,5,7,1,7]
+  '8': [7,5,7,5,7], '9': [7,5,7,1,7],
+  'A': [2,5,7,5,5], 'B': [6,5,6,5,6], 'C': [3,4,4,4,3], 'D': [6,5,5,5,6],
+  'E': [7,4,6,4,7], 'F': [7,4,6,4,4], 'G': [3,4,5,5,3], 'H': [5,5,7,5,5],
+  'I': [7,2,2,2,7], 'J': [1,1,1,5,2], 'K': [5,6,4,6,5], 'L': [4,4,4,4,7],
+  'M': [5,7,7,5,5], 'N': [5,7,5,5,5], 'O': [7,5,5,5,7], 'P': [7,5,7,4,4],
+  'Q': [7,5,5,7,1], 'R': [7,5,6,5,5], 'S': [3,4,2,1,6], 'T': [7,2,2,2,2],
+  'U': [5,5,5,5,7], 'V': [5,5,5,5,2], 'W': [5,5,5,7,5], 'X': [5,5,2,5,5],
+  'Y': [5,5,2,2,2], 'Z': [7,1,2,4,7],
+  ' ': [0,0,0,0,0],
+  '.': [0,0,0,0,2], ',': [0,0,0,2,4], '!': [2,2,2,0,2], '?': [7,1,2,0,2],
+  '-': [0,0,7,0,0], ':': [0,2,0,2,0], "'": [2,4,0,0,0], '/': [1,1,2,4,4]
 };
-function drawNumber(n, x, y, color) {
-  const s = String(n);
+function drawText(text, x, y, color, scale = 1) {
+  const s = String(text).toUpperCase();
   for (let i = 0; i < s.length; i++) {
-    const rows = DIGITS[s[i]];
+    const rows = FONT[s[i]];
+    if (!rows) continue;
     for (let r = 0; r < 5; r++) {
       for (let b = 0; b < 3; b++) {
-        if (rows[r] & (4 >> b)) px(x + i * 4 + b, y + r, 1, 1, color);
+        if (rows[r] & (4 >> b)) {
+          px(x + (i * 4 + b) * scale, y + r * scale, scale, scale, color);
+        }
       }
     }
   }
 }
+function textWidth(text, scale = 1) {
+  return (String(text).length * 4 - 1) * scale;
+}
+function drawNumber(n, x, y, color) { drawText(String(n), x, y, color); }
 
 // ---- Drawing ----
 function drawSky() {
@@ -529,22 +1674,203 @@ function drawCloud(x, y) {
   px(x + 3, y + 6, 11, 2, PAL.cloud);
 }
 
+// Base color per block type (used for walls and particles)
+function baseColorOf(t) {
+  return t === 1 ? PAL.grass : t === 2 ? PAL.dirt : t === 3 ? PAL.stone :
+         t === 5 ? PAL.wood : t === 6 ? PAL.leaf :
+         t === 7 ? PAL.plank : t === 8 ? PAL.brick :
+         t === 9 ? PAL.coal : t === 10 ? PAL.iron : t === 11 ? PAL.diamond :
+         t === 24 ? '#c93a2a' :
+         PAL.bedrock;
+}
+
+// Background walls: same blocks, but darker and behind everything
+function drawBgTiles() {
+  const cStart = Math.max(0, Math.floor(camX / TILE));
+  const cEnd = Math.min(COLS - 1, Math.ceil((camX + W) / TILE));
+  const rStart = Math.max(0, Math.floor(camY / TILE));
+  const rEnd = Math.min(ROWS - 1, Math.ceil((camY + H) / TILE));
+  for (let r = rStart; r <= rEnd; r++) {
+    for (let c = cStart; c <= cEnd; c++) {
+      const t = bgGrid[r][c];
+      if (!t) continue;
+      const x = c * TILE, y = r * TILE;
+      px(x, y, TILE, TILE, baseColorOf(t));
+      // darken + inner shadow border so it reads as "behind"
+      px(x, y, TILE, TILE, 'rgba(10,8,20,.52)');
+      px(x, y, TILE, 1, 'rgba(10,8,20,.4)');
+      px(x, y, 1, TILE, 'rgba(10,8,20,.4)');
+    }
+  }
+}
+
+// Torches in the world (flickering flame)
+function drawTorches(frame) {
+  for (const key of torches) {
+    const [r, c] = key.split('_').map(Number);
+    const x = c * TILE, y = r * TILE;
+    if (x + TILE < camX || x > camX + W || y + TILE < camY || y > camY + H) continue;
+    // stick
+    px(x + 5, y + 5, 2, 6, PAL.torchStick);
+    // flame flickers between two shapes
+    const f = ((frame >> 3) + r + c) % 2;
+    px(x + 4, y + 2, 4, 3, PAL.torchFlame);
+    px(x + 5, y + (f ? 1 : 2), 2, 2, PAL.torchCore);
+  }
+}
+
+// Darkness: cover each tile by how little light it has.
+// The player carries a faint personal glow so you're never 100% blind.
+function drawDarkness() {
+  const cStart = Math.max(0, Math.floor(camX / TILE));
+  const cEnd = Math.min(COLS - 1, Math.ceil((camX + W) / TILE));
+  const rStart = Math.max(0, Math.floor(camY / TILE));
+  const rEnd = Math.min(ROWS - 1, Math.ceil((camY + H) / TILE));
+  const pc = Math.floor((player.x + player.w / 2) / TILE);
+  const pr = Math.floor((player.y + player.h / 2) / TILE);
+  for (let r = rStart; r <= rEnd; r++) {
+    for (let c = cStart; c <= cEnd; c++) {
+      const glow = 3 - (Math.abs(c - pc) + Math.abs(r - pr)); // faint, radius 3
+      const eff = Math.max(light[r][c], glow);
+      if (eff >= LIGHT_MAX) continue;
+      const a = (1 - Math.max(0, eff) / LIGHT_MAX) * 0.96;
+      if (a <= 0.02) continue;
+      px(c * TILE, r * TILE, TILE, TILE, 'rgba(4,3,10,' + a.toFixed(3) + ')');
+    }
+  }
+}
+
+// Cracks on the block being mined (4 stages, Minecraft-style)
+function drawMiningCracks() {
+  const p = player;
+  if (!p.mineTarget || p.mineProgress <= 0) return;
+  const x = p.mineTarget.c * TILE, y = p.mineTarget.r * TILE;
+  const stage = Math.min(3, Math.floor(p.mineProgress * 4));
+  const ck = 'rgba(10,8,16,.65)';
+  // stage 0+
+  px(x + 5, y + 4, 1, 3, ck);
+  px(x + 4, y + 6, 1, 1, ck);
+  if (stage >= 1) {
+    px(x + 6, y + 2, 1, 2, ck);
+    px(x + 3, y + 7, 2, 1, ck);
+    px(x + 8, y + 6, 1, 2, ck);
+  }
+  if (stage >= 2) {
+    px(x + 2, y + 3, 2, 1, ck);
+    px(x + 7, y + 9, 2, 1, ck);
+    px(x + 9, y + 3, 1, 2, ck);
+    px(x + 1, y + 9, 1, 2, ck);
+  }
+  if (stage >= 3) {
+    px(x + 1, y + 1, 1, 2, ck);
+    px(x + 10, y + 1, 1, 2, ck);
+    px(x + 5, y + 9, 1, 3, ck);
+    px(x + 10, y + 9, 1, 2, ck);
+    px(x + 3, y + 10, 1, 1, ck);
+  }
+}
+
 function drawTiles() {
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
+  const cStart = Math.max(0, Math.floor(camX / TILE));
+  const cEnd = Math.min(COLS - 1, Math.ceil((camX + W) / TILE));
+  const rStart = Math.max(0, Math.floor(camY / TILE));
+  const rEnd = Math.min(ROWS - 1, Math.ceil((camY + H) / TILE));
+  for (let r = rStart; r <= rEnd; r++) {
+    for (let c = cStart; c <= cEnd; c++) {
       const t = grid[r][c];
       if (t === 0) continue;
       const x = c * TILE, y = r * TILE;
-      if (t === 1) {
+      if (t === 1) {        // grass
         px(x, y, TILE, 3, PAL.grassHi);
         px(x, y + 3, TILE, 4, PAL.grass);
         px(x, y + 7, TILE, TILE - 7, PAL.dirt);
         px(x + 3, y - 2, 6, 2, PAL.grass);
         px(x + 4, y - 3, 4, 1, PAL.grassHi);
-      } else {
+      } else if (t === 2) { // dirt
         px(x, y, TILE, TILE, PAL.dirt);
         px(x + 2, y + 3, 3, 2, PAL.dirtDk);
         px(x + 7, y + 8, 2, 2, PAL.dirtDk);
+      } else if (t === 3 || t === 9 || t === 10 || t === 11) {
+        // stone and ores — ores stay DISGUISED as stone until dug open
+        px(x, y, TILE, TILE, PAL.stone);
+        px(x + 1, y + 2, 4, 2, PAL.stoneDk);
+        px(x + 7, y + 6, 3, 2, PAL.stoneDk);
+        px(x + 3, y + 9, 2, 2, PAL.stoneDk);
+        if (t !== 3 && isExposed(c, r)) {
+          const oc = t === 9 ? PAL.coal : t === 10 ? PAL.iron : PAL.diamond;
+          px(x + 2, y + 2, 3, 3, oc);
+          px(x + 7, y + 3, 2, 2, oc);
+          px(x + 3, y + 7, 2, 3, oc);
+          px(x + 8, y + 8, 3, 2, oc);
+        }
+      } else if (t === 5) { // wood trunk with bark lines
+        px(x, y, TILE, TILE, PAL.wood);
+        px(x + 2, y, 1, TILE, PAL.woodDk);
+        px(x + 6, y + 2, 1, TILE - 2, PAL.woodDk);
+        px(x + 9, y, 1, TILE - 3, PAL.woodDk);
+      } else if (t === 6) { // leaves with speckles
+        px(x, y, TILE, TILE, PAL.leaf);
+        px(x + 1, y + 2, 2, 2, PAL.leafDk);
+        px(x + 6, y + 1, 3, 2, PAL.leafDk);
+        px(x + 3, y + 7, 2, 2, PAL.leafDk);
+        px(x + 8, y + 8, 2, 2, PAL.leafDk);
+      } else if (t === 22 || t === 23) {
+        // hidden liquids look EXACTLY like stone until dug open
+        if (!revealedLiquid[r][c]) {
+          px(x, y, TILE, TILE, PAL.stone);
+          px(x + 1, y + 2, 4, 2, PAL.stoneDk);
+          px(x + 7, y + 6, 3, 2, PAL.stoneDk);
+          px(x + 3, y + 9, 2, 2, PAL.stoneDk);
+        } else if (t === 22) { // water — animated wave dashes
+          px(x, y, TILE, TILE, PAL.water);
+          const sh = (frameCount >> 4) % 2 ? 0 : 3;
+          px(x + 1 + sh, y + 2, 4, 1, PAL.waterHi);
+          px(x + 6 - sh, y + 6, 4, 1, PAL.waterHi);
+          px(x + 2 + sh, y + 9, 3, 1, PAL.waterHi);
+          if (!isLiquid(tileAt(c, r - 1)) && tileAt(c, r - 1) === 0)
+            px(x, y, TILE, 1, PAL.waterHi); // surface line
+        } else {               // lava — glowing blobs
+          px(x, y, TILE, TILE, PAL.lava);
+          const sh = (frameCount >> 4) % 2 ? 1 : 0;
+          px(x + 2, y + 2 + sh, 3, 2, PAL.lavaHi);
+          px(x + 7, y + 6 - sh, 3, 2, PAL.lavaHi);
+          px(x + 4, y + 9, 2, 1, PAL.lavaHi);
+          if (tileAt(c, r - 1) === 0) px(x, y, TILE, 1, PAL.lavaHi);
+        }
+      } else if (t === 24) { // TNT — red with a white band; flashes when lit
+        px(x, y, TILE, TILE, '#c93a2a');
+        px(x, y + 4, TILE, 4, '#e8e0d0');
+        px(x + 2, y + 5, 2, 2, '#23232b');
+        px(x + 5, y + 5, 2, 2, '#23232b');
+        px(x + 8, y + 5, 2, 2, '#23232b');
+        px(x, y, TILE, 1, '#e86a50');
+        if (litSet.has(r + '_' + c) && (frameCount >> 3) % 2 === 0) {
+          px(x, y, TILE, TILE, 'rgba(255,255,255,.55)');
+        }
+      } else if (t === 7) { // planks — horizontal boards
+        px(x, y, TILE, TILE, PAL.plank);
+        px(x, y + 3, TILE, 1, PAL.plankDk);
+        px(x, y + 7, TILE, 1, PAL.plankDk);
+        px(x + 5, y, 1, 3, PAL.plankDk);
+        px(x + 9, y + 4, 1, 3, PAL.plankDk);
+        px(x + 3, y + 8, 1, 4, PAL.plankDk);
+      } else if (t === 8) { // bricks with mortar lines
+        px(x, y, TILE, TILE, PAL.brick);
+        px(x, y + 3, TILE, 1, PAL.mortar);
+        px(x, y + 7, TILE, 1, PAL.mortar);
+        px(x, y + 11, TILE, 1, PAL.mortar);
+        px(x + 6, y, 1, 3, PAL.mortar);
+        px(x + 3, y + 4, 1, 3, PAL.mortar);
+        px(x + 9, y + 4, 1, 3, PAL.mortar);
+        px(x + 6, y + 8, 1, 3, PAL.mortar);
+        px(x + 1, y + 1, 3, 1, PAL.brickDk);
+        px(x + 8, y + 5, 3, 1, PAL.brickDk);
+      } else {              // bedrock — visibly different: dark, jagged
+        px(x, y, TILE, TILE, PAL.bedrock);
+        px(x, y, 3, 3, PAL.bedrockDk);
+        px(x + 6, y + 2, 4, 3, PAL.bedrockDk);
+        px(x + 2, y + 7, 3, 4, PAL.bedrockDk);
+        px(x + 8, y + 8, 3, 3, PAL.bedrockDk);
       }
       px(x, y, 1, TILE, 'rgba(0,0,0,.12)');
     }
@@ -552,30 +1878,99 @@ function drawTiles() {
 }
 
 function drawMiniBlock(t, x, y) {
+  // Wall items (type >= 100): draw the base block, then darken it
+  if (t >= 100) {
+    drawMiniBlock(t - 100, x, y);
+    px(x, y, 8, 8, 'rgba(10,8,20,.5)');
+    return;
+  }
   if (t === 1) {
     px(x, y, 8, 2, PAL.grassHi);
     px(x, y + 2, 8, 2, PAL.grass);
     px(x, y + 4, 8, 4, PAL.dirt);
-  } else {
+  } else if (t === 2) {
     px(x, y, 8, 8, PAL.dirt);
     px(x + 1, y + 2, 2, 1, PAL.dirtDk);
     px(x + 5, y + 5, 2, 1, PAL.dirtDk);
+  } else if (t === 5) {
+    px(x, y, 8, 8, PAL.wood);
+    px(x + 2, y, 1, 8, PAL.woodDk);
+    px(x + 5, y, 1, 8, PAL.woodDk);
+  } else if (t === 6) {
+    px(x, y, 8, 8, PAL.leaf);
+    px(x + 1, y + 1, 2, 2, PAL.leafDk);
+    px(x + 5, y + 4, 2, 2, PAL.leafDk);
+  } else if (t === 7) {
+    px(x, y, 8, 8, PAL.plank);
+    px(x, y + 2, 8, 1, PAL.plankDk);
+    px(x, y + 5, 8, 1, PAL.plankDk);
+  } else if (t === 8) {
+    px(x, y, 8, 8, PAL.brick);
+    px(x, y + 2, 8, 1, PAL.mortar);
+    px(x, y + 5, 8, 1, PAL.mortar);
+    px(x + 4, y, 1, 2, PAL.mortar);
+    px(x + 2, y + 3, 1, 2, PAL.mortar);
+  } else if (t === 9 || t === 10 || t === 11) {
+    px(x, y, 8, 8, PAL.stone);
+    const oc = t === 9 ? PAL.coal : t === 10 ? PAL.iron : PAL.diamond;
+    px(x + 1, y + 1, 2, 2, oc);
+    px(x + 5, y + 2, 2, 2, oc);
+    px(x + 2, y + 5, 2, 2, oc);
+    px(x + 5, y + 5, 2, 2, oc);
+  } else if (t === 12) { // torch
+    px(x + 3, y + 3, 2, 5, PAL.torchStick);
+    px(x + 2, y + 1, 4, 2, PAL.torchFlame);
+    px(x + 3, y, 2, 2, PAL.torchCore);
+  } else if (t === 24) { // TNT
+    px(x, y, 8, 8, '#c93a2a');
+    px(x, y + 3, 8, 2, '#e8e0d0');
+    px(x + 2, y + 3, 1, 2, '#23232b');
+    px(x + 5, y + 3, 1, 2, '#23232b');
+  } else if (t === 25) { // flint & steel: steel arc + spark
+    px(x + 1, y + 3, 2, 4, PAL.stone);
+    px(x + 2, y + 6, 3, 2, PAL.stone);
+    px(x + 5, y + 1, 2, 2, PAL.lavaHi);
+    px(x + 6, y, 1, 1, PAL.torchCore);
+  } else if (t >= 13 && t <= 21) { // tools — head color shows the tier
+    const head = [PAL.stone, PAL.iron, PAL.diamond][toolTier(t)];
+    const kind = toolKind(t);
+    if (kind === 0) {        // pickaxe: head arc + handle
+      px(x + 1, y, 6, 2, head);
+      px(x, y + 1, 1, 2, head);
+      px(x + 7, y + 1, 1, 2, head);
+      px(x + 3, y + 2, 2, 6, PAL.wood);
+    } else if (kind === 1) { // axe: head on top-side + handle
+      px(x + 1, y, 4, 3, head);
+      px(x + 1, y + 3, 2, 1, head);
+      px(x + 3, y + 3, 2, 5, PAL.wood);
+    } else {                 // shovel: handle + blade
+      px(x + 3, y, 2, 4, PAL.wood);
+      px(x + 2, y + 4, 4, 3, head);
+      px(x + 3, y + 7, 2, 1, head);
+    }
+  } else {
+    px(x, y, 8, 8, PAL.stone);
+    px(x + 1, y + 1, 3, 2, PAL.stoneDk);
+    px(x + 5, y + 5, 2, 2, PAL.stoneDk);
   }
 }
 
+// In-game hotbar (top-left): starts empty, fills as you mine
 function drawInventory() {
-  const slotW = 26, slotH = 17, pad = 2;
-  const panelW = SLOTS.length * (slotW + pad) + pad;
+  const slotW = 20, slotH = 20, pad = 2;
+  const panelW = HOTBAR_SIZE * (slotW + pad) + pad;
   px(2, 2, panelW, slotH + pad * 2, PAL.panel);
 
-  for (let i = 0; i < SLOTS.length; i++) {
-    const s = SLOTS[i];
+  for (let i = 0; i < HOTBAR_SIZE; i++) {
+    const s = hotbar[i];
     const sx = 2 + pad + i * (slotW + pad);
     const sy = 2 + pad;
     px(sx, sy, slotW, slotH, PAL.slot);
-    drawNumber(i + 1, sx + 2, sy + 1, PAL.dim);
-    drawMiniBlock(s.type, sx + 2, sy + 7);
-    drawNumber(s.count, sx + 13, sy + 9, PAL.white);
+    drawNumber(i + 1, sx + 1, sy + 1, PAL.dim);
+    if (s) {
+      drawMiniBlock(s.type, sx + 6, sy + 6);
+      drawNumber(s.count, sx + slotW - String(s.count).length * 4 - 1, sy + slotH - 6, PAL.white);
+    }
     if (i === selectedSlot) {
       px(sx, sy, slotW, 1, PAL.white);
       px(sx, sy + slotH - 1, slotW, 1, PAL.white);
@@ -585,13 +1980,156 @@ function drawInventory() {
   }
 }
 
+// Chat log (bottom-left): recent messages, fading out
+function drawChat() {
+  const now = Date.now();
+  const recent = chatLog.filter(m => now - m.ts < CHAT_SHOW_MS).slice(-5);
+  const lineH = 8;
+  for (let i = 0; i < recent.length; i++) {
+    const m = recent[i];
+    const age = now - m.ts;
+    const alpha = age > CHAT_SHOW_MS - 1500 ? (CHAT_SHOW_MS - age) / 1500 : 1;
+    const y = H - 6 - (recent.length - i) * lineH;
+    const nameStr = m.name + ':';
+    const nw = textWidth(nameStr, 1);
+    const tw = textWidth(m.text, 1);
+    ctx.globalAlpha = Math.max(0, alpha);
+    px(2, y - 1, nw + tw + 8, 7, 'rgba(20,14,32,.6)');
+    drawText(nameStr, 4, y, m.id === myId ? mySkin()[0] : (remotes.get(m.id) ? remotes.get(m.id).skin[0] : (m.id ? skinFor(m.id)[0] : PAL.white)));
+    drawText(m.text, 4 + nw + 3, y, PAL.white);
+    ctx.globalAlpha = 1;
+  }
+}
+
 function drawNetStatus() {
   const count = 1 + remotes.size;
   px(W - 22, 4, 3, 3, net.enabled ? PAL.online : PAL.offline);
   drawNumber(count, W - 15, 3, PAL.white);
+  if (adminMode) {
+    drawText(adminNoclip ? 'NOCLIP' : 'ADMIN', W - (adminNoclip ? 27 : 23), 11, PAL.offline);
+  }
 }
 
-function drawSprite(x, y, facing, walkFrame, body, dark) {
+// ---- Hearts (7x6 pixel heart; supports halves) ----
+const HEART_ROWS = [
+  [0,1,1,0,1,1,0],
+  [1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1],
+  [0,1,1,1,1,1,0],
+  [0,0,1,1,1,0,0],
+  [0,0,0,1,0,0,0]
+];
+function drawHeart(x, y, fill) { // fill: 2 = full, 1 = half, 0 = empty
+  for (let r = 0; r < 6; r++) {
+    for (let cc = 0; cc < 7; cc++) {
+      if (!HEART_ROWS[r][cc]) continue;
+      let color = PAL.heartEmpty;
+      if (fill === 2) color = PAL.heart;
+      else if (fill === 1) color = cc <= 3 ? PAL.heart : PAL.heartDk;
+      else color = PAL.heartDk;
+      px(x + cc, y + r, 1, 1, color);
+    }
+  }
+}
+function drawHearts() {
+  const p = player;
+  const y = 25; // just under the inventory panel
+  for (let i = 0; i < p.maxHp / 2; i++) {
+    const hpLeft = p.hp - i * 2;
+    const fill = hpLeft >= 2 ? 2 : hpLeft === 1 ? 1 : 0;
+    drawHeart(4 + i * 9, y, fill);
+  }
+}
+
+// ---- Inventory screen (C): crafts on top, inventory grid, hotbar below ----
+let menuSlotRects = [];
+function drawCraftMenu() {
+  craftRowRects = [];
+  menuSlotRects = [];
+
+  const slotS = 13, gap = 2;             // menu item slot size
+  const gridW = HOTBAR_SIZE * (slotS + gap) - gap;
+  const craftCols = 4;
+  const craftRows = Math.ceil(RECIPES.length / craftCols);
+  const rowH = 9;
+  const pw = 232;
+  const craftH = craftRows * rowH;
+  const ph = 10 + craftH + 4 + 2 * (slotS + gap) + 4 + (slotS + gap) + 4;
+  const pxx = (W - pw) / 2, pyy = (H - ph) / 2;
+  craftPanelRect = { x: pxx, y: pyy, w: pw, h: ph };
+
+  // panel
+  px(pxx - 1, pyy - 1, pw + 2, ph + 2, PAL.white);
+  px(pxx, pyy, pw, ph, 'rgba(26,22,38,.96)');
+  drawText('CRAFT', pxx + 5, pyy + 3, PAL.white);
+  drawText('C TO CLOSE', pxx + pw - 42, pyy + 3, PAL.dim);
+
+  // -- craft rows in three compact columns (above the inventory slots) --
+  const colW = (pw - 15) / craftCols;
+  for (let i = 0; i < RECIPES.length; i++) {
+    const r = RECIPES[i];
+    const col = Math.floor(i / craftRows);
+    const row = i % craftRows;
+    const rx = pxx + 3 + col * (colW + 3);
+    const ry = pyy + 9 + row * rowH;
+    const ok = canCraft(r);
+    craftRowRects[i] = { x: rx, y: ry, w: colW, h: rowH - 1 };
+    px(rx, ry, colW, rowH - 1, ok ? 'rgba(255,255,255,.14)' : 'rgba(255,255,255,.05)');
+
+    let cx = rx + 2;
+    for (let k = 0; k < r.ins.length; k++) {
+      const [t, n] = r.ins[k];
+      drawText(String(n), cx, ry + 3, ok ? PAL.white : PAL.dim);
+      cx += String(n).length * 4 + 1;
+      drawMiniBlock(t, cx, ry + 1);
+      cx += 9;
+      if (k < r.ins.length - 1) { px(cx, ry + 5, 2, 2, PAL.dim); cx += 3; }
+    }
+    px(cx + 1, ry + 5, 3, 1, ok ? PAL.white : PAL.dim);
+    px(cx + 3, ry + 4, 1, 3, ok ? PAL.white : PAL.dim);
+    cx += 6;
+    drawText(String(r.out[1]), cx, ry + 3, ok ? PAL.online : PAL.dim);
+    cx += String(r.out[1]).length * 4 + 1;
+    drawMiniBlock(r.out[0], cx, ry + 1);
+  }
+
+  // -- one item slot --
+  function drawMenuSlot(area, i, sx, sy) {
+    const arr = area === 'hot' ? hotbar : invGrid;
+    const s = arr[i];
+    px(sx, sy, slotS, slotS, PAL.slot);
+    if (s) {
+      drawMiniBlock(s.type, sx + 3, sy + 3);
+      drawNumber(s.count, sx + slotS - String(s.count).length * 4, sy + slotS - 6, PAL.white);
+    }
+    if (grabbed && grabbed.area === area && grabbed.i === i) {
+      px(sx, sy, slotS, 1, PAL.online);
+      px(sx, sy + slotS - 1, slotS, 1, PAL.online);
+      px(sx, sy, 1, slotS, PAL.online);
+      px(sx + slotS - 1, sy, 1, slotS, PAL.online);
+    }
+    menuSlotRects.push({ area, i, x: sx, y: sy, w: slotS, h: slotS });
+  }
+
+  // -- inventory grid (2 x 7) --
+  const gx0 = pxx + (pw - gridW) / 2;
+  let gy0 = pyy + 9 + craftH + 4;
+  for (let row = 0; row < 2; row++) {
+    for (let col = 0; col < HOTBAR_SIZE; col++) {
+      drawMenuSlot('inv', row * HOTBAR_SIZE + col, gx0 + col * (slotS + gap), gy0 + row * (slotS + gap));
+    }
+  }
+
+  // -- hotbar row (slightly separated, like Minecraft) --
+  const hy = gy0 + 2 * (slotS + gap) + 4;
+  for (let col = 0; col < HOTBAR_SIZE; col++) {
+    drawMenuSlot('hot', col, gx0 + col * (slotS + gap), hy);
+  }
+  // marker under the selected hotbar slot
+  px(gx0 + selectedSlot * (slotS + gap), hy + slotS + 1, slotS, 1, PAL.white);
+}
+
+function drawSprite(x, y, facing, walkFrame, body, dark, hat = 0) {
   x = Math.round(x) - 1;
   y = Math.round(y);
   const f = facing;
@@ -609,6 +2147,8 @@ function drawSprite(x, y, facing, walkFrame, body, dark) {
   px(ex + 3 * f, y + 1, 2, 2, PAL.white);
   px(ex + (f === 1 ? 1 : 0),         y + 2, 1, 1, PAL.ink);
   px(ex + 3 * f + (f === 1 ? 1 : 0), y + 2, 1, 1, PAL.ink);
+
+  if (hat) drawHat(x, y, f, hat);
 }
 
 function drawShadow(pxx, pyy, pw, ph) {
@@ -628,38 +2168,143 @@ function updateParticles() {
     q.x += q.vx;
     q.y += q.vy;
     q.life--;
-    if (q.life <= 0 || q.y > H) particles.splice(i, 1);
+    if (q.life <= 0 || q.y > WORLD_H) particles.splice(i, 1);
   }
 }
 function drawParticles() {
   for (const q of particles) px(q.x, q.y, 2, 2, q.color);
 }
 
+// Clouds scattered across the whole world and through the tall sky
+const CLOUDS = [];
+const SKY_TOP = 0;
+const SKY_BOTTOM = GROUND_ROW * TILE - 30;
+for (let x = 20; x < WORLD_W; x += 90 + (x * 7) % 60) {
+  // a low cloud near the surface and a few higher ones per column band
+  CLOUDS.push({ x, y: SKY_BOTTOM - 40 + (x * 13) % 60 });
+  CLOUDS.push({ x: (x + 45) % WORLD_W, y: 40 + (x * 31) % (SKY_BOTTOM - 80) });
+}
+
+// Stars near the top of the sky (fade in with altitude)
+const STARS = [];
+for (let i = 0; i < Math.floor(WORLD_W / 8); i++) {
+  STARS.push({ x: (i * 97 + 13) % WORLD_W, y: (i * 53) % (22 * TILE) });
+}
+
 // ---- Game loop ----
+let frameCount = 0;
+let lastLightFrame = -99;
 function loop() {
+  frameCount++;
   update();
   updateParticles();
+  updateTNT();
+  // Relight at most every 6 frames — a big-map recompute costs a few ms
+  if (lightDirty && frameCount - lastLightFrame >= 6) {
+    computeLight();
+    lastLightFrame = frameCount;
+  }
 
+  // Sky is screen-fixed...
   drawSky();
-  drawCloud(30, 18);
-  drawCloud(120, 10);
-  drawCloud(190, 30);
-  drawTiles();
 
-  for (const rp of remotes.values()) {
-    ctx.globalAlpha = 0.9;
-    drawSprite(rp.x, rp.y, rp.facing, rp.walkFrame, rp.skin[0], rp.skin[1]);
+  // ...fading to the edge of space high above the surface
+  const surfaceY = GROUND_ROW * TILE;
+  const camMid = camY + H / 2;
+  const alt = Math.max(0, Math.min(1, 1 - camMid / surfaceY));
+  if (alt > 0) {
+    ctx.globalAlpha = alt * 0.75;
+    ctx.fillStyle = '#0a1030';
+    ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
 
-  if (!player.onGround) drawShadow(player.x, player.y, player.w, player.h);
-  drawSprite(player.x, player.y, player.facing, player.walkFrame, mySkin[0], mySkin[1]);
+  // Everything in the world is drawn shifted by the camera
+  ctx.save();
+  ctx.translate(-Math.round(camX), -Math.round(camY));
+
+  // Stars appear as you climb toward the top of the sky
+  if (alt > 0.15) {
+    ctx.globalAlpha = Math.min(1, (alt - 0.15) * 1.6);
+    for (const s of STARS) px(s.x, s.y, 1, 1, PAL.white);
+    ctx.globalAlpha = 1;
+  }
+
+  // Clouds drift slower than the ground (parallax)
+  ctx.save();
+  ctx.translate(Math.round(camX * 0.5), 0);
+  for (const cl of CLOUDS) drawCloud(cl.x, cl.y);
+  ctx.restore();
+
+  drawBgTiles();
+  drawTiles();
+  drawMiningCracks();
+  drawTorches(frameCount);
+
+  for (const rp of remotes.values()) {
+    ctx.globalAlpha = 0.9;
+    drawSprite(rp.x, rp.y, rp.facing, rp.walkFrame, rp.skin[0], rp.skin[1], rp.hat);
+    ctx.globalAlpha = 1;
+    // name tag above the head
+    if (rp.name) {
+      const tw = textWidth(rp.name, 1);
+      const nx = Math.round(rp.x + 5 - tw / 2);
+      const ny = Math.round(rp.y - 9);
+      px(nx - 2, ny - 1, tw + 4, 7, 'rgba(20,14,32,.6)');
+      drawText(rp.name, nx, ny, PAL.white);
+    }
+  }
+
+  if (!player.dead) {
+    if (!player.onGround) drawShadow(player.x, player.y, player.w, player.h);
+    drawSprite(player.x, player.y, player.facing, player.walkFrame, mySkin()[0], mySkin()[1], myHat);
+  }
   drawParticles();
+
+  // Darkness covers everything in the world (torches carve out light)
+  drawDarkness();
+
+  ctx.restore();
+
+  // UI is screen-fixed
   drawInventory();
+  drawHearts();
   drawNetStatus();
+  drawChat();
+  if (invOpen && !player.dead) drawCraftMenu();
+
+  // Red flash when hurt
+  if (player.hurtFlash > 0) {
+    ctx.globalAlpha = (player.hurtFlash / 12) * 0.35;
+    ctx.fillStyle = PAL.heart;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+
+  // ---- Death screen ----
+  if (player.dead) {
+    const t = Math.min(1, player.deathTimer / 30); // fade in
+    ctx.globalAlpha = t * 0.75;
+    ctx.fillStyle = '#1a0508';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+
+    if (player.deathTimer > 10) {
+      const title = 'YOU DIED';
+      const tw = textWidth(title, 3);
+      drawText(title, (W - tw) / 2 + 1, 45, '#5a0f16', 3); // drop shadow
+      drawText(title, (W - tw) / 2, 43, PAL.heart, 3);
+    }
+    if (player.deathTimer > 45 && Math.floor(player.deathTimer / 30) % 2 === 0) {
+      const hint = isTouch ? 'TAP TO RESPAWN' : 'SPACE TO RESPAWN';
+      const hw = textWidth(hint, 1);
+      drawText(hint, (W - hw) / 2, 78, PAL.white, 1);
+    }
+  }
 
   requestAnimationFrame(loop);
 }
+initPickers();
 loop();
 </script>
 
